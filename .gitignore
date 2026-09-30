@@ -1,0 +1,15 @@
+# --- 나만의 개발 워크플로우: 세션 상태 (커밋 금지) ---
+# OMC 세션 상태 (mission-state, checkpoints 등 — docs/ 밑이 아니라 항상 프로젝트 루트에 있어야 한다)
+/.omc
+# Claude Code 로컬 세션 상태
+/.claude
+
+# --- dolsoe ---
+/node_modules
+/dist
+/data
+.env
+*.log
+
+# HUD 캐시가 하위 폴더에 생기는 경우까지 제외
+.omc/
