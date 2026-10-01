@@ -16,3 +16,6 @@ Python(사용자 스택과 다름, 계약 공유 이점 없음), Deno/Bun(새 �
 
 ## 결과/트레이드오프
 jipsa 의존성을 그대로 복사하지 않고 필요한 것만(cheerio·rss-parser는 필요 시 추가).
+
+## 디버깅 노트
+- 2026-09-30 build 1.1: 신규 설치가 jipsa 때보다 메이저가 올라감(zod 4, TypeScript 6, ESLint 10, vitest 5, better-sqlite3 13). 계약이 zod 4에서 `z.record(z.string())`(인자 1개)로 타입 에러 → `z.record(z.string(), z.string())`로 수정(필드 모양 불변). 나머지 스키마(discriminatedUnion·`.datetime()`·`.url()`)는 런타임 재검증 통과. ESLint 10에서도 기존 flat config가 그대로 동작.

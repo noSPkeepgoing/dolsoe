@@ -54,7 +54,7 @@ export const ProductSchema = z.object({
   url: z.string().url(), // 제휴 링크
   priceKrw: z.number().int().nonnegative().nullable(),
   priceAsOf: z.string().datetime().nullable(), // REQ-011 가격 기준일
-  specs: z.record(z.string()), // 비교표 재료(면적·필터비용·저자·출판사 등)
+  specs: z.record(z.string(), z.string()), // 비교표 재료(면적·필터비용·저자·출판사 등)
 });
 export type Product = z.infer<typeof ProductSchema>;
 
