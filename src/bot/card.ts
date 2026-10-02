@@ -56,6 +56,14 @@ export function formatCard(draft: Draft): { text: string; buttons: CardButton[] 
   return { text, buttons };
 }
 
+/** REQ-013: 발행 실패 알림의 버튼. 재시도는 `publish` 콜백을 재사용한다(failed → publishing 전이가 허용돼 있다, ADR-006). */
+export function formatFailureButtons(draftId: number): CardButton[] {
+  return [
+    { label: "다시 시도", data: callbackData({ action: "publish", draftId }) },
+    { label: "폐기", data: callbackData({ action: "discard", draftId }) },
+  ];
+}
+
 export function parseCallbackData(data: string): BotCallback | null {
   try {
     const parsed = BotCallbackSchema.safeParse(JSON.parse(data));

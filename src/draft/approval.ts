@@ -1,8 +1,6 @@
 import type { Draft, DraftBody, DraftStatus, QualityReport } from "@contract/domain.js";
 
 import { isBudgetExceeded } from "../llm/cost.js";
-import { renderPostText } from "../publish/renderer.js";
-import { missingDisclosures } from "../publish/disclosure.js";
 
 import { deliverCardSafely } from "./deliver.js";
 import { generateDraftBody, type BodyGenerator } from "./generate.js";
@@ -27,53 +25,18 @@ export interface ApprovalDeps {
   getMonthCostKrw: () => number;
   notify: (text: string) => Promise<void>;
   deliverCard: (draft: Draft) => Promise<void>;
-  /** 1.3 임시 핸드오프: 완성 본문을 사람에게 전달한다. 1.4에서 PublishOrchestrator로 대체. */
-  deliverPost: (text: string) => Promise<void>;
-  /** 테스트용 교체 지점. 기본은 renderPostText. */
-  render?: (draft: Draft) => string;
 }
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** 이미 발행·폐기된 초안의 수정 대기가 다음 메시지를 삼키지 않도록 푼다. */
-function clearPendingRevisionFor(store: ApprovalStore, id: number): void {
+export function clearPendingRevisionFor(store: Pick<ApprovalStore, "getPendingRevision" | "setPendingRevision">, id: number): void {
   if (store.getPendingRevision() === id) store.setPendingRevision(null);
 }
 
-export type PublishOutcome = "handed_off" | "ignored" | "blocked" | "failed";
-
-/**
- * REQ-007·009·010: 발행 버튼. 대가성 문구 게이트(REQ-010)를 먼저 통과해야 `publishing`으로 넘어가고,
- * 전이는 CAS라 더블탭은 한 번만 처리된다(REQ-009). 이미 처리됐으면 알림 없이 조용히 무시한다.
- */
-export async function publishDraft(deps: ApprovalDeps, id: number): Promise<PublishOutcome> {
-  const { store, notify } = deps;
-  const draft = store.getDraft(id);
-  if (draft === null || draft.status !== "awaiting_approval" || draft.body === null) return "ignored";
-
-  const text = (deps.render ?? renderPostText)(draft);
-  if (missingDisclosures(text, draft.products).length > 0) {
-    await notify(`#${id} 초안에 대가성 문구가 없어 발행을 막았어요. 초안은 그대로 남아 있어요.`);
-    return "blocked";
-  }
-  if (!store.transition(id, "awaiting_approval", "publishing")) return "ignored";
-  clearPendingRevisionFor(store, id);
-
-  try {
-    await deps.deliverPost(text);
-    store.transition(id, "publishing", "handed_off");
-  } catch (error) {
-    store.transition(id, "publishing", "failed");
-    await notify(`#${id} 전달에 실패했어요: ${messageOf(error)}. 초안은 보존돼 있어요.`);
-    return "failed";
-  }
-  await notify(`✅ #${id} 발행 준비 완료 — 위 본문을 복사해 네이버 블로그에 붙여넣어 주세요.`);
-  return "handed_off";
-}
-
-/** REQ-008: 폐기. 지우지 않고 상태만 바꾼다(기록 보존). */
+/** REQ-008: 폐기. 지우지 않고 상태만 바꾼다(기록 보존). 발행 실패(`failed`)로 멈춘 초안도 사람이 폐기할 수 있다(REQ-013). */
 export async function discardDraft(deps: ApprovalDeps, id: number): Promise<"discarded" | "ignored"> {
-  const changed = deps.store.transition(id, "awaiting_approval", "discarded");
+  const changed = deps.store.transition(id, "awaiting_approval", "discarded") || deps.store.transition(id, "failed", "discarded");
   if (changed) clearPendingRevisionFor(deps.store, id);
   if (changed) await deps.notify(`🗑 #${id} 초안을 폐기했어요.`);
   return changed ? "discarded" : "ignored";

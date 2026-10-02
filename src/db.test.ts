@@ -9,6 +9,10 @@ import type { DraftBody, Product } from "@contract/domain.js";
 import {
   addLlmCostKrw,
   claimDueJobs,
+  failOpenPublishAttempts,
+  finishPublishAttempt,
+  insertPublishAttempt,
+  listPublishAttempts,
   countPendingDrafts,
   deleteKv,
   enqueueJob,
@@ -247,5 +251,54 @@ describe("draft transitions (CAS)", () => {
     transitionDraft(db, b.id, "awaiting_approval", "drafting", NOW);
     expect(listDraftsByStatus(db, "drafting").map((x) => x.id)).toEqual([b.id]);
     expect(listDraftsByStatus(db, "awaiting_approval").map((x) => x.id)).toEqual([a.id]);
+  });
+});
+
+describe("publish attempts (ADR-006)", () => {
+  const draftInput = () => ({
+    category: "book" as const,
+    mode: "daily" as const,
+    status: "awaiting_approval" as const,
+    products: [sampleProduct("1")],
+    body: null,
+    memo: null,
+    quality: null,
+  });
+
+  it("[REQ-013] 시도 기록은 결과 없이 먼저 쓰이고, 끝나면 결과와 종료 시각이 채워진다", () => {
+    const db = openDb(":memory:");
+    const draft = insertDraft(db, draftInput(), NOW);
+    const id = insertPublishAttempt(db, draft.id, "manual", NOW);
+    expect(listPublishAttempts(db, draft.id)).toMatchObject([{ id, mode: "manual", finishedAt: null, result: null }]);
+
+    const later = new Date("2026-09-30T00:01:00.000Z");
+    finishPublishAttempt(db, id, { ok: true, mode: "manual", url: null, externalId: null }, later);
+    expect(listPublishAttempts(db, draft.id)).toMatchObject([
+      { id, finishedAt: later.toISOString(), result: { ok: true, mode: "manual" } },
+    ]);
+  });
+
+  it("[REQ-013] 시도는 초안별로 시작 순서대로 나온다", () => {
+    const db = openDb(":memory:");
+    const a = insertDraft(db, draftInput(), NOW);
+    const b = insertDraft(db, draftInput(), NOW);
+    insertPublishAttempt(db, a.id, "live", NOW);
+    insertPublishAttempt(db, b.id, "manual", NOW);
+    insertPublishAttempt(db, a.id, "manual", NOW);
+    expect(listPublishAttempts(db, a.id).map((attempt) => attempt.mode)).toEqual(["live", "manual"]);
+  });
+
+  it("[REQ-013] 끝나지 않은 시도만 실패(결과 불확실)로 닫는다", () => {
+    const db = openDb(":memory:");
+    const draft = insertDraft(db, draftInput(), NOW);
+    const done = insertPublishAttempt(db, draft.id, "live", NOW);
+    finishPublishAttempt(db, done, { ok: true, mode: "live", url: null, externalId: null }, NOW);
+    insertPublishAttempt(db, draft.id, "manual", NOW);
+
+    failOpenPublishAttempts(db, draft.id, "재시작으로 중단", NOW);
+    const [first, second] = listPublishAttempts(db, draft.id);
+    expect(first?.result).toMatchObject({ ok: true });
+    expect(second?.result).toMatchObject({ ok: false, mode: "manual", retryable: false, reason: "재시작으로 중단" });
+    expect(second?.finishedAt).not.toBeNull();
   });
 });

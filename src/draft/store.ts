@@ -5,10 +5,13 @@ import { CategorySchema } from "@contract/domain.js";
 import {
   countPendingDrafts,
   deleteKv,
+  failOpenPublishAttempts,
+  finishPublishAttempt,
   getDraft,
   getKv,
   getMonthLlmCostKrw,
   insertDraft,
+  insertPublishAttempt,
   listCoveredProducts,
   listDraftsByStatus,
   markCovered,
@@ -17,6 +20,7 @@ import {
   transitionDraft,
 } from "../db.js";
 import type { DraftStore } from "../jobs/daily-draft.js";
+import type { PublishAttemptStore } from "../publish/orchestrator.js";
 import { kstMonth } from "../schedule/time.js";
 
 import type { ApprovalStore } from "./approval.js";
@@ -57,5 +61,15 @@ export function createApprovalStore(db: Database.Database, now: () => Date): App
       return value === null ? null : Number(value);
     },
     setPendingRevision: (id) => (id === null ? deleteKv(db, PENDING_REVISION_KEY) : setKv(db, PENDING_REVISION_KEY, String(id))),
+  };
+}
+
+/** SQLite 위의 발행 시도 로그 + 발행 중 초안 조회. 시도 기록은 발행기를 부르기 전에 쓴다(ADR-006). */
+export function createPublishStore(db: Database.Database, now: () => Date): PublishAttemptStore {
+  return {
+    startAttempt: (draftId, mode) => insertPublishAttempt(db, draftId, mode, now()),
+    finishAttempt: (attemptId, result) => finishPublishAttempt(db, attemptId, result, now()),
+    listPublishing: () => listDraftsByStatus(db, "publishing"),
+    failOpenAttempts: (draftId, reason) => failOpenPublishAttempts(db, draftId, reason, now()),
   };
 }

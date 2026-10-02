@@ -7,8 +7,11 @@ import { DISCLOSURE_TEXTS } from "@contract/domain.js";
 import { getDraft, insertDraft, openDb } from "../db.js";
 import type { ApprovalDeps } from "../draft/approval.js";
 import { expectedExperienceLine, type BodyGenerator, type GenerateBodyInput } from "../draft/generate.js";
-import { createApprovalStore, createDraftStore } from "../draft/store.js";
+import { createApprovalStore, createDraftStore, createPublishStore } from "../draft/store.js";
 import type { LinkDraftDeps } from "../jobs/link-draft.js";
+import { createHandoffPublisher } from "../publish/handoff.js";
+import type { PublishDeps } from "../publish/orchestrator.js";
+import type { Publisher } from "../publish/publisher.js";
 
 import { registerHandlers } from "./handlers.js";
 import { createMessenger } from "./telegram.js";
@@ -53,7 +56,7 @@ interface ApiCall {
   payload: Record<string, unknown>;
 }
 
-function setup() {
+function setup(makePublishers: (sendChunk: (text: string) => Promise<void>) => Publisher[] = (sendChunk) => [createHandoffPublisher({ sendChunk })]) {
   const db = openDb(":memory:");
   const draft = insertDraft(
     db,
@@ -85,6 +88,13 @@ function setup() {
   const messenger = createMessenger(bot.api, OWNER);
   const generator: BodyGenerator = { generateBody: vi.fn(async (input: GenerateBodyInput) => bodyFor(input)) };
   const approval: ApprovalDeps = { store: createApprovalStore(db, () => NOW), generator, getMonthCostKrw: () => 0, ...messenger };
+  const approvalStore = createApprovalStore(db, () => NOW);
+  const publish: PublishDeps = {
+    store: { ...approvalStore, ...createPublishStore(db, () => NOW) },
+    publishers: makePublishers(messenger.sendChunk),
+    notify: messenger.notify,
+    notifyFailure: messenger.notifyFailure,
+  };
   const link: LinkDraftDeps = {
     now: () => NOW,
     generator,
@@ -93,7 +103,7 @@ function setup() {
     notify: messenger.notify,
     deliverCard: messenger.deliverCard,
   };
-  registerHandlers(bot, { approval, link });
+  registerHandlers(bot, { approval, publish, link });
 
   let updateId = 1;
   const user = { id: OWNER, is_bot: false, first_name: "나" };
@@ -117,6 +127,27 @@ function setup() {
 const publishData = (id: number) => JSON.stringify({ action: "publish", draftId: id });
 
 describe("registerHandlers", () => {
+  it("[REQ-013] 발행이 실패하면 `다시 시도 / 폐기` 버튼이 달린 실패 알림이 오고, 다시 시도를 누르면 이어서 발행된다", async () => {
+    let failing = true;
+    const flaky: Publisher = {
+      mode: "manual",
+      render: (draft) => `본문 ${DISCLOSURE_TEXTS.yes24} #${draft.id}`,
+      publish: async () =>
+        failing ? { ok: false, mode: "manual", retryable: false, authExpired: false, reason: "텔레그램 장애" } : { ok: true, mode: "manual", url: null, externalId: null },
+    };
+    const { tap, draft, db, calls } = setup(() => [flaky]);
+
+    await tap(publishData(draft.id));
+    expect(getDraft(db, draft.id)?.status).toBe("failed");
+    const failure = calls.filter((c) => c.method === "sendMessage").at(-1)!;
+    expect(String(failure.payload["text"])).toContain("텔레그램 장애");
+    expect(JSON.stringify(failure.payload["reply_markup"])).toContain("다시 시도");
+
+    failing = false;
+    await tap(publishData(draft.id)); // 다시 시도 버튼은 publish 콜백
+    expect(getDraft(db, draft.id)?.status).toBe("handed_off");
+  });
+
   it("[REQ-007][REQ-010] `발행`을 누르면 대가성 문구가 붙은 본문이 오고, 카드 버튼은 사라진다", async () => {
     const { tap, draft, db, sent, methods } = setup();
     await tap(publishData(draft.id));

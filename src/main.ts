@@ -11,10 +11,12 @@ import { createMessenger } from "./bot/telegram.js";
 import { loadConfig, requireDailyDraftKeys } from "./config.js";
 import { markUpdateProcessed, openDb } from "./db.js";
 import { recoverStuckDrafts } from "./draft/approval.js";
-import { createApprovalStore, createDraftStore } from "./draft/store.js";
+import { createApprovalStore, createDraftStore, createPublishStore } from "./draft/store.js";
 import { runDailyDraft } from "./jobs/daily-draft.js";
 import { createBodyGenerator } from "./llm/body-generator.js";
 import { recordLlmUsage } from "./llm/usage.js";
+import { createHandoffPublisher } from "./publish/handoff.js";
+import { recoverStuckPublishing, type PublishDeps } from "./publish/orchestrator.js";
 import { createScheduler } from "./schedule/scheduler.js";
 import { Yes24Source } from "./sources/yes24.js";
 
@@ -42,14 +44,24 @@ async function main(): Promise<void> {
   const yes24 = new Yes24Source({ apiKey: keys.yes24ApiKey });
   const store = createDraftStore(db, now);
 
-  const approval = { store: createApprovalStore(db, now), generator, getMonthCostKrw: store.getMonthCostKrw, ...messenger };
+  const approvalStore = createApprovalStore(db, now);
+  const approval = { store: approvalStore, generator, getMonthCostKrw: store.getMonthCostKrw, ...messenger };
+  // 발행 사다리(ADR-005): 1차 구현은 ③ 텔레그램 전달만. 네이버 어댑터는 1.5 스파이크 뒤 위 단계로 추가한다.
+  const publish: PublishDeps = {
+    store: { ...approvalStore, ...createPublishStore(db, now) },
+    publishers: [createHandoffPublisher({ sendChunk: messenger.sendChunk })],
+    notify: messenger.notify,
+    notifyFailure: messenger.notifyFailure,
+  };
   registerHandlers(bot, {
     approval,
+    publish,
     link: { now, generator, store, resolveYes24: (itemId) => yes24.fetchItem(itemId), ...messenger },
   });
 
   // 수정 중 재시작으로 멈춘 초안을 먼저 되돌린다(안 그러면 승인 대기 상한을 계속 차지한다).
   await recoverStuckDrafts(approval);
+  await recoverStuckPublishing(publish);
 
   const scheduler = createScheduler({
     db,

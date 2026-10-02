@@ -11,11 +11,20 @@ import type {
   DraftMode,
   DraftStatus,
   Product,
+  PublishAttempt,
+  PublishMode,
+  PublishResult,
   QualityReport,
   ScheduleJob,
   ScheduleJobKind,
 } from "@contract/domain.js";
-import { CoveredProductSchema, DRAFT_TRANSITIONS, DraftSchema, ScheduleJobSchema } from "@contract/domain.js";
+import {
+  CoveredProductSchema,
+  DRAFT_TRANSITIONS,
+  DraftSchema,
+  PublishAttemptSchema,
+  ScheduleJobSchema,
+} from "@contract/domain.js";
 
 /**
  * 버전별 마이그레이션. 인덱스 + 1 = user_version. 스키마는 docs/PLAN.md, 저장소 결정은 ADR-003.
@@ -61,6 +70,16 @@ const MIGRATIONS: readonly string[] = [
      month TEXT PRIMARY KEY,
      estimated_cost_krw REAL NOT NULL
    )`,
+  // v3 — 1.4 발행 시도 로그(ADR-005·006). 시도 기록을 먼저 쓰므로 result_json은 진행 중엔 NULL
+  `CREATE TABLE publish_attempts (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     draft_id INTEGER NOT NULL REFERENCES drafts (id),
+     mode TEXT NOT NULL,
+     started_at TEXT NOT NULL,
+     finished_at TEXT,
+     result_json TEXT
+   );
+   CREATE INDEX idx_publish_attempts_draft ON publish_attempts (draft_id)`,
 ];
 
 function migrate(db: Database.Database): void {
@@ -273,4 +292,56 @@ export function claimDueJobs(db: Database.Database, now: Date): ScheduleJob[] {
       return ScheduleJobSchema.parse({ id: row.id, kind: row.kind, dueAt: row.due_at, doneAt: stamp });
     });
   })();
+}
+
+interface PublishAttemptRow {
+  id: number;
+  draft_id: number;
+  mode: string;
+  started_at: string;
+  finished_at: string | null;
+  result_json: string | null;
+}
+
+function rowToPublishAttempt(row: PublishAttemptRow): PublishAttempt {
+  return PublishAttemptSchema.parse({
+    id: row.id,
+    draftId: row.draft_id,
+    mode: row.mode,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    result: parseJson(row.result_json),
+  });
+}
+
+/** ADR-006: 발행기를 부르기 전에 먼저 쓴다. 결과는 `finishPublishAttempt`가 채운다. */
+export function insertPublishAttempt(db: Database.Database, draftId: number, mode: PublishMode, now: Date): number {
+  const result = db
+    .prepare("INSERT INTO publish_attempts (draft_id, mode, started_at) VALUES (?, ?, ?)")
+    .run(draftId, mode, now.toISOString());
+  return Number(result.lastInsertRowid);
+}
+
+export function finishPublishAttempt(db: Database.Database, attemptId: number, result: PublishResult, now: Date): void {
+  db.prepare("UPDATE publish_attempts SET finished_at = ?, result_json = ? WHERE id = ?").run(
+    now.toISOString(),
+    JSON.stringify(result),
+    attemptId,
+  );
+}
+
+export function listPublishAttempts(db: Database.Database, draftId: number): PublishAttempt[] {
+  const rows = db.prepare("SELECT * FROM publish_attempts WHERE draft_id = ? ORDER BY id").all(draftId) as PublishAttemptRow[];
+  return rows.map(rowToPublishAttempt);
+}
+
+/** 기동 시 복구: 끝나지 않은 시도(결과 NULL)를 "결과 불확실"로 닫는다(자동 재발행 금지, ADR-006). */
+export function failOpenPublishAttempts(db: Database.Database, draftId: number, reason: string, now: Date): void {
+  const open = db.prepare("SELECT id, mode FROM publish_attempts WHERE draft_id = ? AND result_json IS NULL").all(draftId) as {
+    id: number;
+    mode: PublishMode;
+  }[];
+  for (const attempt of open) {
+    finishPublishAttempt(db, attempt.id, { ok: false, mode: attempt.mode, retryable: false, authExpired: false, reason }, now);
+  }
 }

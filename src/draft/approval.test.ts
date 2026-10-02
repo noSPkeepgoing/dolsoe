@@ -1,14 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { Draft, DraftBody, Product } from "@contract/domain.js";
-import { DISCLOSURE_TEXTS, MONTHLY_LLM_BUDGET_KRW } from "@contract/domain.js";
+import { MONTHLY_LLM_BUDGET_KRW } from "@contract/domain.js";
 
 import { getDraft, insertDraft, openDb } from "../db.js";
 
 import {
   beginRevision,
   discardDraft,
-  publishDraft,
   recoverStuckDrafts,
   submitRevision,
   type ApprovalDeps,
@@ -60,60 +59,10 @@ function setup(over: Partial<ApprovalDeps> = {}, seedStatus: Draft["status"] = "
     getMonthCostKrw: () => 0,
     notify: vi.fn(async () => {}),
     deliverCard: vi.fn(async () => {}),
-    deliverPost: vi.fn(async () => {}),
     ...over,
   };
   return { db, draft, deps };
 }
-
-describe("publishDraft", () => {
-  it("[REQ-007][REQ-010] 발행하면 대가성 문구가 붙은 완성 본문을 전달하고 handed_off가 된다", async () => {
-    const { db, draft, deps } = setup();
-    await expect(publishDraft(deps, draft.id)).resolves.toBe("handed_off");
-    expect(deps.deliverPost).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(deps.deliverPost).mock.calls[0]![0]).toContain(DISCLOSURE_TEXTS.yes24);
-    expect(getDraft(db, draft.id)?.status).toBe("handed_off");
-  });
-
-  it("[REQ-009] 발행을 동시에 두 번 눌러도 한 번만 처리된다", async () => {
-    const { db, draft, deps } = setup();
-    const outcomes = await Promise.all([publishDraft(deps, draft.id), publishDraft(deps, draft.id)]);
-    expect([...outcomes].sort()).toEqual(["handed_off", "ignored"]);
-    expect(deps.deliverPost).toHaveBeenCalledTimes(1);
-    expect(getDraft(db, draft.id)?.status).toBe("handed_off");
-  });
-
-  it("[REQ-009] 이미 발행된 초안에 다시 눌러도 조용히 무시한다(알림도 없음)", async () => {
-    const { draft, deps } = setup();
-    await publishDraft(deps, draft.id);
-    vi.mocked(deps.notify).mockClear();
-    await expect(publishDraft(deps, draft.id)).resolves.toBe("ignored");
-    expect(deps.deliverPost).toHaveBeenCalledTimes(1);
-    expect(deps.notify).not.toHaveBeenCalled();
-  });
-
-  it("[REQ-010] 대가성 문구가 빠진 본문은 발행을 막고 초안은 대기 상태로 남는다", async () => {
-    const { db, draft, deps } = setup({ render: () => "대가성 문구 없는 본문" });
-    await expect(publishDraft(deps, draft.id)).resolves.toBe("blocked");
-    expect(deps.deliverPost).not.toHaveBeenCalled();
-    expect(vi.mocked(deps.notify).mock.calls[0]![0]).toContain("대가성");
-    expect(getDraft(db, draft.id)?.status).toBe("awaiting_approval");
-  });
-
-  it("[REQ-009] 폐기됐거나 없는 초안은 발행하지 않는다", async () => {
-    const { draft, deps } = setup({}, "discarded");
-    await expect(publishDraft(deps, draft.id)).resolves.toBe("ignored");
-    await expect(publishDraft(deps, 9999)).resolves.toBe("ignored");
-    expect(deps.deliverPost).not.toHaveBeenCalled();
-  });
-
-  it("[REQ-007] 전달이 실패하면 failed로 두고 알린다(초안 본문은 보존)", async () => {
-    const { db, draft, deps } = setup({ deliverPost: vi.fn(async () => { throw new Error("telegram down"); }) });
-    await expect(publishDraft(deps, draft.id)).resolves.toBe("failed");
-    expect(getDraft(db, draft.id)).toMatchObject({ status: "failed", body: { title: "원본 제목" } });
-    expect(vi.mocked(deps.notify).mock.calls[0]![0]).toContain("telegram down");
-  });
-});
 
 describe("discardDraft", () => {
   it("[REQ-008] 폐기는 상태만 바꾸고 기록을 남기며, 두 번 눌러도 조용히 무시한다", async () => {
@@ -121,6 +70,12 @@ describe("discardDraft", () => {
     await expect(discardDraft(deps, draft.id)).resolves.toBe("discarded");
     await expect(discardDraft(deps, draft.id)).resolves.toBe("ignored");
     expect(getDraft(db, draft.id)).toMatchObject({ status: "discarded", body: { title: "원본 제목" } });
+  });
+
+  it("[REQ-013] 발행에 실패해 failed로 멈춘 초안도 사람이 폐기할 수 있다", async () => {
+    const { db, draft, deps } = setup({}, "failed");
+    await expect(discardDraft(deps, draft.id)).resolves.toBe("discarded");
+    expect(getDraft(db, draft.id)?.status).toBe("discarded");
   });
 });
 
@@ -193,13 +148,6 @@ describe("승인 흐름 보강 (audit)", () => {
     other.deps.store.transition(other.draft.id, "awaiting_approval", "discarded"); // 다른 경로로 처리됨
     await expect(submitRevision(other.deps, "표를 더 간단히")).resolves.toBe("ignored");
     expect(vi.mocked(other.deps.notify).mock.calls.at(-1)![0]).toContain("이미 처리");
-  });
-
-  it("[REQ-009] 발행·폐기하면 그 초안의 수정 대기도 풀린다", async () => {
-    const { draft, deps } = setup();
-    await beginRevision(deps, draft.id);
-    await publishDraft(deps, draft.id);
-    expect(deps.store.getPendingRevision()).toBeNull();
   });
 
   it("[NFR-001] 월 비용 상한에 닿으면 수정 재생성을 하지 않고 이전 초안을 그대로 둔다", async () => {

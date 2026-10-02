@@ -2,8 +2,6 @@ import type { Api } from "grammy";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Draft } from "@contract/domain.js";
-import { TELEGRAM_MAX_MESSAGE_CHARS } from "@contract/domain.js";
-
 import { createMessenger } from "./telegram.js";
 
 const OWNER = 111;
@@ -39,14 +37,25 @@ describe("createMessenger", () => {
     expect(options.reply_markup.inline_keyboard.flat().map((b) => b.text)).toEqual(["발행", "수정", "폐기"]);
   });
 
-  it("[REQ-007] 완성 본문이 한도를 넘으면 여러 통으로 나눠 보낸다(유실 없이)", async () => {
+  it("[REQ-012] 핸드오프용 sendChunk는 한도 분할 없이 소유자 채팅으로 한 통만 보낸다", async () => {
     const { sendMessage, api } = fakeApi();
-    const text = Array.from({ length: 400 }, (_, i) => `줄 ${i} ${"가".repeat(30)}`).join("\n");
-    await createMessenger(api, OWNER).deliverPost(text);
-    const sent = sendMessage.mock.calls.map((call) => (call as unknown as [number, string])[1]);
-    expect(sent.length).toBeGreaterThan(1);
-    for (const chunk of sent) expect(chunk.length).toBeLessThanOrEqual(TELEGRAM_MAX_MESSAGE_CHARS);
-    expect(sent.join("\n")).toBe(text);
+    await createMessenger(api, OWNER).sendChunk("본문 한 통");
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(OWNER, "본문 한 통");
+  });
+
+  it("[REQ-013] 발행 실패 알림은 `다시 시도 / 폐기` 버튼과 함께 간다(버튼은 같은 초안 번호를 가리킨다)", async () => {
+    const { sendMessage, api } = fakeApi();
+    await createMessenger(api, OWNER).notifyFailure(5, "발행 실패");
+    const [chatId, text, options] = sendMessage.mock.calls[0] as unknown as [number, string, { reply_markup: { inline_keyboard: { text: string; callback_data: string }[][] } }];
+    expect(chatId).toBe(OWNER);
+    expect(text).toBe("발행 실패");
+    const buttons = options.reply_markup.inline_keyboard.flat();
+    expect(buttons.map((b) => b.text)).toEqual(["다시 시도", "폐기"]);
+    expect(buttons.map((b) => JSON.parse(b.callback_data))).toEqual([
+      { action: "publish", draftId: 5 },
+      { action: "discard", draftId: 5 },
+    ]);
   });
 
   it("[REQ-007] 알림은 소유자 채팅으로 텍스트로 간다", async () => {

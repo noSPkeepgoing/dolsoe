@@ -1,7 +1,8 @@
 import type { Bot, Context } from "grammy";
 
-import { beginRevision, discardDraft, publishDraft, submitRevision, type ApprovalDeps } from "../draft/approval.js";
+import { beginRevision, discardDraft, submitRevision, type ApprovalDeps } from "../draft/approval.js";
 import { runLinkDraft, type LinkDraftDeps } from "../jobs/link-draft.js";
+import { publishDraft, type PublishDeps } from "../publish/orchestrator.js";
 import { parseLinkMessage } from "../sources/link-parser.js";
 
 import { parseCallbackData } from "./card.js";
@@ -26,7 +27,7 @@ async function stripButtons(ctx: Context): Promise<void> {
  * REQ-006~009: 승인 버튼(발행/수정/폐기)과 텍스트 메시지(수정 지시 또는 링크 모드)를 서비스에 연결하는 얇은 배선.
  * 판단은 draft/·jobs/ 서비스가 하고 여기엔 로직이 없다. 소유자 필터(REQ-014)는 앞단 미들웨어가 이미 처리한다.
  */
-export function registerHandlers(bot: Bot, deps: { approval: ApprovalDeps; link: LinkDraftDeps }): void {
+export function registerHandlers(bot: Bot, deps: { approval: ApprovalDeps; publish: PublishDeps; link: LinkDraftDeps }): void {
   bot.on("callback_query:data", async (ctx) => {
     await ctx.answerCallbackQuery();
     const callback = parseCallbackData(ctx.callbackQuery.data);
@@ -34,7 +35,7 @@ export function registerHandlers(bot: Bot, deps: { approval: ApprovalDeps; link:
 
     switch (callback.action) {
       case "publish": {
-        const outcome = await publishDraft(deps.approval, callback.draftId);
+        const outcome = await publishDraft(deps.publish, callback.draftId);
         if (outcome !== "blocked") await stripButtons(ctx); // 막힌 경우엔 버튼을 남겨 고친 뒤 다시 누를 수 있게 한다
         return;
       }
