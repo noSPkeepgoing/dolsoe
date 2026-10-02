@@ -73,15 +73,16 @@ class FakeStore implements DraftStore {
 const run = (over: { store?: FakeStore; sources?: ProductSource[]; generator?: BodyGenerator } = {}) => {
   const store = over.store ?? new FakeStore();
   const notify = vi.fn<(text: string) => Promise<void>>(async () => {});
+  const deliverCard = vi.fn<(draft: Draft) => Promise<void>>(async () => {});
   const generator = over.generator ?? generatorOk();
   const sources = over.sources ?? [sourceFor("book", products(BOOKS))];
-  const result = runDailyDraft({ now: () => NOW, sources, generator, store, notify });
-  return { store, notify, generator, sources, result };
+  const result = runDailyDraft({ now: () => NOW, sources, generator, store, notify, deliverCard });
+  return { store, notify, deliverCard, generator, sources, result };
 };
 
 describe("runDailyDraft", () => {
-  it("[REQ-001][REQ-002] 소스에서 후보를 받아 초안을 만들어 승인 대기로 저장하고 알린다", async () => {
-    const { store, notify, result } = run();
+  it("[REQ-001][REQ-002][REQ-007] 소스에서 후보를 받아 초안을 만들어 승인 대기로 저장하고 승인 카드로 보낸다", async () => {
+    const { store, notify, deliverCard, result } = run();
     const outcome = await result;
     expect(outcome.status).toBe("created");
     expect(store.saved).toHaveLength(1);
@@ -90,8 +91,9 @@ describe("runDailyDraft", () => {
     expect(draft.products).toHaveLength(BOOKS);
     expect(draft.body?.category).toBe("book");
     expect(covered.map((p) => p.externalId)).toEqual(draft.products.map((p) => p.externalId));
-    expect(notify).toHaveBeenCalledTimes(1);
-    expect(notify.mock.calls[0]![0]).toContain("이번 주 베스트셀러");
+    expect(notify).not.toHaveBeenCalled(); // 텍스트 알림이 아니라 버튼 달린 카드로 보낸다
+    expect(deliverCard).toHaveBeenCalledTimes(1);
+    expect(deliverCard.mock.calls[0]![0]).toMatchObject({ id: 1, status: "awaiting_approval", body: { title: "이번 주 베스트셀러" } });
   });
 
   it("[REQ-001] 가전·책 소스가 모두 있으면 마지막 생성의 반대 카테고리로 번갈아 만든다", async () => {
@@ -171,12 +173,12 @@ describe("runDailyDraft", () => {
     expect(await result).toEqual({ status: "skipped", reason: "no_candidates" });
   });
 
-  it("[REQ-015] 금지 표현이 남은 초안도 저장하되, 알림에 개수를 표시한다", async () => {
+  it("[REQ-015] 금지 표현이 남은 초안도 저장하고 카드로 보낸다(품질 결과는 초안에 담겨 카드에 표시)", async () => {
     const generator = generatorOk("에 대해 알아보겠습니다");
-    const { store, notify, result } = run({ generator });
+    const { store, deliverCard, result } = run({ generator });
     expect((await result).status).toBe("created");
     expect(store.saved[0]!.draft.quality?.bannedPhrasesFound).toEqual(["에 대해 알아보겠습니다"]);
-    expect(notify.mock.calls[0]![0]).toContain("금지 표현 1개");
+    expect(deliverCard.mock.calls[0]![0].quality?.bannedPhrasesFound).toEqual(["에 대해 알아보겠습니다"]);
   });
 
   it("[NFR-001] 이번 달 LLM 비용이 상한에 닿았으면 만들지 않고 알린다", async () => {
@@ -194,5 +196,13 @@ describe("runDailyDraft", () => {
     expect(await result).toEqual({ status: "skipped", reason: "generation_error" });
     expect(notify.mock.calls[0]![0]).toContain("모델 거절");
     expect(store.saved).toHaveLength(0);
+  });
+
+  it("[REQ-007] 카드 전송이 실패해도 저장된 초안은 유지하고 번호와 함께 알린다(고아 초안 방지)", async () => {
+    const { store, notify, deliverCard, result } = run();
+    deliverCard.mockRejectedValueOnce(new Error("telegram down"));
+    expect((await result).status).toBe("created");
+    expect(store.saved).toHaveLength(1);
+    expect(notify.mock.calls.at(-1)![0]).toMatch(/#1.*telegram down/s);
   });
 });

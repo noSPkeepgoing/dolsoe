@@ -22,6 +22,11 @@ export const LLM_PRICING_USD_PER_MTOK = {
   "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1 },
 } as const;
 export const USD_TO_KRW = 1500; // 비용 상한용 보수적 고정 환율(추정치)
+export const TELEGRAM_MAX_MESSAGE_CHARS = 4096; // 텔레그램 메시지 한 통의 글자 상한 — 넘는 본문은 쪼개 보낸다
+export const CARD_PREVIEW_MAX_CHARS = 2500; // REQ-007 초안 카드 본문 미리보기 상한(품질·버튼 줄을 위한 여유 포함)
+/** REQ-006 링크 모드에서 수익 링크로 인정하는 쿠팡 파트너스 단축 링크 호스트(ADR-008: 페이지는 긁지 않는다). */
+export const COUPANG_PARTNER_HOSTS = ["link.coupang.com", "coupa.ng"] as const;
+export const YES24_HOST_SUFFIX = "yes24.com"; // REQ-006 YES24 상품 링크 판별(서브도메인 포함)
 
 /** REQ-010 대가성 문구. 렌더러가 삽입하며 LLM 출력에 의존하지 않는다. */
 export const DISCLOSURE_TEXTS = {
@@ -39,6 +44,22 @@ export const BANNED_PHRASES = [
   "직접 써보니",
   "사용해 본 결과",
 ] as const;
+
+/**
+ * REQ-011 봇이 지어낸 후기·경험 주장 패턴. 봇이 만든 문장에만 적용(사용자가 준 경험 문장은 제외)하고,
+ * 걸리면 재시도 후에도 남을 때 생성 실패로 본다(금지 표현과 달리 차단). 시작 목록 — 운영하며 승격.
+ */
+export const EXPERIENCE_CLAIM_PATTERNS: readonly RegExp[] = [
+  /써\s?보(니|았|면|고)/,
+  /써\s?봤/,
+  /사용해\s?보(니|았|면)/,
+  /사용해\s?봤/,
+  /사용해\s?본/,
+  /(직접|제가|저는)\s*(써|사용|먹어|입어|들어|읽어|구매|구입)/,
+  /읽어\s?보(니|았|면)/,
+  /읽어\s?봤/,
+  /몇\s*(달|주|일)\s*(간|동안)?\s*(써|사용)/,
+];
 
 // ── 카테고리·소스 ──────────────────────────────────────────────────
 export const CategorySchema = z.enum(["appliance", "book"]); // 생활가전·주방 / 책 추천
@@ -211,6 +232,7 @@ export const ReviseInstructionSchema = z.object({
   draftId: z.number().int().positive(),
   text: z.string().min(1),
   experienceLine: z.string().nullable(), // 파서가 지시문에서 추출한 경험 문장(없으면 null)
+  clearExperience: z.boolean(), // "경험 한 줄: 없음" — 이전에 넣은 경험 문장을 지운다
 });
 export type ReviseInstruction = z.infer<typeof ReviseInstructionSchema>;
 

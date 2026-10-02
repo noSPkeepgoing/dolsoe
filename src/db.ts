@@ -15,7 +15,7 @@ import type {
   ScheduleJob,
   ScheduleJobKind,
 } from "@contract/domain.js";
-import { CoveredProductSchema, DraftSchema, ScheduleJobSchema } from "@contract/domain.js";
+import { CoveredProductSchema, DRAFT_TRANSITIONS, DraftSchema, ScheduleJobSchema } from "@contract/domain.js";
 
 /**
  * 버전별 마이그레이션. 인덱스 + 1 = user_version. 스키마는 docs/PLAN.md, 저장소 결정은 ADR-003.
@@ -155,6 +155,41 @@ export function insertDraft(db: Database.Database, draft: NewDraft, now: Date): 
   return rowToDraft(row);
 }
 
+export function getDraft(db: Database.Database, id: number): Draft | null {
+  const row = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRow | undefined;
+  return row === undefined ? null : rowToDraft(row);
+}
+
+/**
+ * 상태 전이는 반드시 이 함수를 거친다(CONVENTIONS §6, ADR-006): `WHERE id=? AND status=?`의 변경 행 수로 판정하는 compare-and-swap.
+ * false = 이미 다른 요청이 처리함(더블탭 등) → 호출 쪽은 조용히 무시한다(REQ-009). 허용 전이가 아니면 예외.
+ */
+export function transitionDraft(db: Database.Database, id: number, from: DraftStatus, to: DraftStatus, now: Date): boolean {
+  if (!DRAFT_TRANSITIONS[from].includes(to)) throw new Error(`Invalid draft transition: ${from} -> ${to}`);
+  const result = db
+    .prepare("UPDATE drafts SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
+    .run(to, now.toISOString(), id, from);
+  return result.changes === 1;
+}
+
+/**
+ * REQ-008: 수정 재생성 결과 저장. `drafting`인 초안에만 본문·품질을 쓰고, 대기 상태로의 전이는 `transitionDraft`를 거친다(CONVENTIONS §6).
+ * 둘은 한 트랜잭션이라 본문만 바뀌고 상태가 남는 일이 없다.
+ */
+export function saveRevision(db: Database.Database, id: number, body: DraftBody, quality: QualityReport, now: Date): boolean {
+  return db.transaction(() => {
+    const result = db
+      .prepare("UPDATE drafts SET body_json = ?, quality_json = ? WHERE id = ? AND status = 'drafting'")
+      .run(JSON.stringify(body), JSON.stringify(quality), id);
+    return result.changes === 1 && transitionDraft(db, id, "drafting", "awaiting_approval", now);
+  })();
+}
+
+export function listDraftsByStatus(db: Database.Database, status: DraftStatus): Draft[] {
+  const rows = db.prepare("SELECT * FROM drafts WHERE status = ? ORDER BY id").all(status) as DraftRow[];
+  return rows.map(rowToDraft);
+}
+
 /** REQ-004: 승인을 기다리는 초안(drafting + awaiting_approval) 수. */
 export function countPendingDrafts(db: Database.Database): number {
   const row = db
@@ -195,6 +230,10 @@ export function setKv(db: Database.Database, key: string, value: string): void {
     key,
     value,
   );
+}
+
+export function deleteKv(db: Database.Database, key: string): void {
+  db.prepare("DELETE FROM kv WHERE key = ?").run(key);
 }
 
 export function getMonthLlmCostKrw(db: Database.Database, month: string): number {

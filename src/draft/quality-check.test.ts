@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ApplianceBody, BookBody, Product } from "@contract/domain.js";
 
-import { checkQuality, validateAgainstProducts } from "./quality-check.js";
+import { checkQuality, findExperienceClaims, validateAgainstProducts } from "./quality-check.js";
 
 const product = (externalId: string): Product => ({
   externalId,
@@ -112,5 +112,21 @@ describe("validateAgainstProducts", () => {
       [product("1"), product("2")],
     );
     expect(dup.length).toBeGreaterThan(0);
+  });
+});
+
+describe("findExperienceClaims", () => {
+  it("[REQ-011] 봇이 지어낸 후기·경험 표현(변형 포함)을 찾는다", () => {
+    for (const phrase of ["써보니 조용했어요", "직접 사용해 봤는데", "제가 읽어보니", "몇 달간 사용했습니다"]) {
+      expect(findExperienceClaims(appliance({ verdict: phrase }))).not.toEqual([]);
+    }
+  });
+
+  it("[REQ-011] 데이터 기반 서술은 걸리지 않는다", () => {
+    expect(findExperienceClaims(appliance({ verdict: "가격 대비 필터 비용이 낮습니다" }))).toEqual([]);
+  });
+
+  it("[REQ-011] 사용자가 준 경험 문장(experienceLine)은 검사 대상이 아니다", () => {
+    expect(findExperienceClaims(appliance({ experienceLine: "직접 써보니 소음이 컸어요" }))).toEqual([]);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { Yes24ApiError, Yes24Source, parseYes24Items } from "./yes24.js";
+import { Yes24ApiError, Yes24LinkError, Yes24Source, parseYes24Items } from "./yes24.js";
 
 const NOW = new Date("2026-10-01T00:00:00.000Z");
 
@@ -110,5 +110,31 @@ describe("Yes24Source", () => {
 
   it("[REQ-005] 지원하지 않는 카테고리를 요청하면 실패한다", async () => {
     await expect(make(vi.fn() as unknown as typeof fetch).fetchCandidates("appliance")).rejects.toThrow(/appliance/);
+  });
+});
+
+describe("Yes24Source.fetchItem (링크 모드)", () => {
+  const make = (fetchFn: typeof fetch): Yes24Source => new Yes24Source({ apiKey: "yk_test", fetchFn, now: () => NOW });
+
+  it("[REQ-006] 상품번호로 상세를 조회해 수익 링크가 붙은 Product 한 개를 돌려준다", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(200, envelope([item()])));
+    const product = await make(fetchFn as unknown as typeof fetch).fetchItem("900000001");
+    expect(product).toMatchObject({ externalId: "900000001", url: "https://www.yes24.com/Product/Goods/900000001?addon=abc" });
+    const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://apis.yes24.com/v1/goods/itemDetail?searchType=ItemId&query=900000001");
+    expect(new Headers(init.headers).get("X-Api-Key")).toBe("yk_test");
+  });
+
+  it("[REQ-006] 상품이 없거나(GOODS_001) 수익 링크가 없어 걸러지면 이유를 담아 Yes24LinkError", async () => {
+    const missing = vi.fn(async () => jsonResponse(404, { success: false, errorCode: "GOODS_001", message: "상품 없음", data: null }));
+    await expect(make(missing as unknown as typeof fetch).fetchItem("1")).rejects.toBeInstanceOf(Yes24LinkError);
+
+    const noAddon = vi.fn(async () => jsonResponse(200, envelope([item({ addOnLink: "" })])));
+    await expect(make(noAddon as unknown as typeof fetch).fetchItem("1")).rejects.toThrow(/수익 링크/);
+  });
+
+  it("[REQ-006] 인증 오류 등 그 밖의 API 오류는 그대로 Yes24ApiError", async () => {
+    const auth = vi.fn(async () => jsonResponse(401, { success: false, errorCode: "AUTH_002", message: "유효하지 않은 API Key입니다.", data: null }));
+    await expect(make(auth as unknown as typeof fetch).fetchItem("1")).rejects.toBeInstanceOf(Yes24ApiError);
   });
 });

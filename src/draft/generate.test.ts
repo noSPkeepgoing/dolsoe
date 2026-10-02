@@ -86,3 +86,81 @@ describe("generateDraftBody", () => {
     expect(result.quality.hasExperienceLine).toBe(false);
   });
 });
+
+describe("generateDraftBody — 수정(revision)", () => {
+  const previous = body({ verdict: "이전 결론" });
+  const revision = (over: { instruction?: string; experienceLine?: string | null; previousBody?: DraftBody } = {}) => ({
+    previousBody: over.previousBody ?? previous,
+    instruction: over.instruction ?? "표를 더 간단히",
+    experienceLine: over.experienceLine ?? null,
+  });
+  const run = (generator: BodyGenerator, rev: ReturnType<typeof revision>) =>
+    generateDraftBody({ generator, category: "appliance", products: PRODUCTS, memo: null, revision: rev });
+
+  it("[REQ-008] 이전 본문과 수정 지시를 생성기에 넘기고, 새 본문을 돌려준다", async () => {
+    const generator = generatorReturning(body({ verdict: "새 결론" }));
+    const result = await run(generator, revision());
+    expect(generator.generateBody.mock.calls[0]?.[0]).toMatchObject({ revision: { instruction: "표를 더 간단히", previousBody: previous } });
+    expect((result.body as ApplianceBody).verdict).toBe("새 결론");
+  });
+
+  it("[REQ-011] 내가 준 경험 문장이 원문 그대로 들어 있으면 통과하고 '경험 있음'으로 기록한다", async () => {
+    const generator = generatorReturning(body({ experienceLine: "소음이 생각보다 컸어요" }));
+    const result = await run(generator, revision({ experienceLine: "소음이 생각보다 컸어요" }));
+    expect(result.body.experienceLine).toBe("소음이 생각보다 컸어요");
+    expect(result.quality.hasExperienceLine).toBe(true);
+  });
+
+  it("[REQ-011] 경험 문장이 바뀌어 오면 문제를 알려주며 1회 재시도하고, 원문대로 오면 통과한다", async () => {
+    const generator = generatorReturning(body({ experienceLine: "소음이 좀 컸어요" }), body({ experienceLine: "소음이 생각보다 컸어요" }));
+    const result = await run(generator, revision({ experienceLine: "소음이 생각보다 컸어요" }));
+    expect(generator.generateBody).toHaveBeenCalledTimes(1 + REGENERATE_MAX_RETRIES);
+    expect(generator.generateBody.mock.calls[1]?.[0].problems.join(" ")).toContain("소음이 생각보다 컸어요");
+    expect(result.body.experienceLine).toBe("소음이 생각보다 컸어요");
+  });
+
+  it("[REQ-011] 재시도 후에도 경험 문장이 없거나 바뀌어 있으면 GenerationError(실패 알림)", async () => {
+    const generator = generatorReturning(body({ experienceLine: null }));
+    await expect(run(generator, revision({ experienceLine: "소음이 생각보다 컸어요" }))).rejects.toBeInstanceOf(GenerationError);
+  });
+
+  it("[REQ-011] 이번 지시에 경험 문장이 없으면 이전 초안의 내 경험 문장을 그대로 유지한다(데이터 유실 금지)", async () => {
+    const withExperience = body({ experienceLine: "이전에 내가 준 경험" });
+    const generator = generatorReturning(body({ experienceLine: "이전에 내가 준 경험" }));
+    const result = await run(generator, revision({ previousBody: withExperience }));
+    expect(result.body.experienceLine).toBe("이전에 내가 준 경험");
+  });
+
+  it("[REQ-011] 내가 준 적 없는데 모델이 경험 문장을 새로 지어 넣으면 거부(재시도 후 실패)", async () => {
+    const generator = generatorReturning(body({ experienceLine: "써보니 정말 좋았어요" }));
+    await expect(run(generator, revision())).rejects.toBeInstanceOf(GenerationError);
+  });
+});
+
+describe("generateDraftBody — 지어낸 후기(REQ-011)", () => {
+  it("[REQ-011] 봇이 후기를 지어내면 문제로 알려 1회 재시도하고, 깨끗해지면 통과한다", async () => {
+    const generator = generatorReturning(body({ verdict: "직접 써보니 조용해요" }), body());
+    await generateDraftBody({ generator, category: "appliance", products: PRODUCTS, memo: null });
+    expect(generator.generateBody).toHaveBeenCalledTimes(1 + REGENERATE_MAX_RETRIES);
+    expect(generator.generateBody.mock.calls[1]?.[0].problems.join(" ")).toMatch(/후기|경험/);
+  });
+
+  it("[REQ-011] 재시도 후에도 후기가 남으면 차단한다(GenerationError)", async () => {
+    const generator = generatorReturning(body({ verdict: "직접 써보니 조용해요" }));
+    await expect(generateDraftBody({ generator, category: "appliance", products: PRODUCTS, memo: null })).rejects.toBeInstanceOf(GenerationError);
+  });
+
+  it("[REQ-011] 수정에서 '경험 한 줄: 없음'(clearExperience)이면 이전 경험 문장을 지우고 null이어야 통과한다", async () => {
+    const previousBody = body({ experienceLine: "이전 경험" });
+    const generator = generatorReturning(body({ experienceLine: null }));
+    const result = await generateDraftBody({
+      generator,
+      category: "appliance",
+      products: PRODUCTS,
+      memo: null,
+      revision: { previousBody, instruction: "경험 한 줄: 없음", experienceLine: null, clearExperience: true },
+    });
+    expect(result.body.experienceLine).toBeNull();
+    expect(result.quality.hasExperienceLine).toBe(false);
+  });
+});

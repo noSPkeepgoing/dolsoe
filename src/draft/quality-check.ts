@@ -1,5 +1,5 @@
 import type { DraftBody, Product, QualityReport } from "@contract/domain.js";
-import { BANNED_PHRASES } from "@contract/domain.js";
+import { BANNED_PHRASES, EXPERIENCE_CLAIM_PATTERNS } from "@contract/domain.js";
 
 /** 검사 대상은 봇이 만든 문장뿐이다. 사용자가 준 경험 문장(`experienceLine`)과 분류용 `category`는 제외(REQ-011). */
 const EXCLUDED_KEYS = new Set(["experienceLine", "category"]);
@@ -25,6 +25,17 @@ export function checkQuality(body: DraftBody): QualityReport {
     bannedPhrasesFound: BANNED_PHRASES.filter((phrase) => joined.includes(phrase)),
     hasExperienceLine: (body.experienceLine ?? "").trim().length > 0,
   };
+}
+
+/** REQ-011: 봇이 지어낸 후기·경험 표현(걸린 부분 문자열). 사용자가 준 경험 문장은 제외한다. */
+export function findExperienceClaims(body: DraftBody): string[] {
+  const texts: string[] = [];
+  collectBotText(body, texts);
+  const joined = texts.join("\n");
+  return EXPERIENCE_CLAIM_PATTERNS.flatMap((pattern) => {
+    const match = pattern.exec(joined);
+    return match === null ? [] : [match[0]];
+  });
 }
 
 /**

@@ -10,6 +10,11 @@ export function kstDateString(now: Date): string {
   return toKst(now).toISOString().slice(0, 10);
 }
 
+/** 카드·본문의 가격 기준일 표기("10/02"). */
+export function kstMonthDay(instant: Date): string {
+  return kstDateString(instant).slice(5).replace("-", "/");
+}
+
 export function kstMonth(now: Date): string {
   return toKst(now).toISOString().slice(0, 7);
 }

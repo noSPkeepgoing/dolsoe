@@ -2,6 +2,7 @@ import type { Category, CoveredProduct, Draft, Product } from "@contract/domain.
 import { DEDUP_DAYS, PRODUCTS_PER_DRAFT } from "@contract/domain.js";
 
 import type { NewDraft } from "../db.js";
+import { deliverCardSafely } from "../draft/deliver.js";
 import { generateDraftBody, type BodyGenerator } from "../draft/generate.js";
 import { filterRecentlyCovered, isPendingCapReached, nextCategory } from "../draft/rules.js";
 import { isBudgetExceeded } from "../llm/cost.js";
@@ -24,7 +25,7 @@ const messageOf = (error: unknown): string => (error instanceof Error ? error.me
 
 /**
  * 기본 모드 하루 1편(REQ-001): 상한(REQ-004)·비용 확인 → 카테고리 선택 → 후보 수집(REQ-005) →
- * 중복 제외(REQ-003) → 생성·검사(REQ-002·015) → 승인 대기로 저장.
+ * 중복 제외(REQ-003) → 생성·검사(REQ-002·015) → 승인 대기로 저장 → 승인 카드 전송(REQ-007).
  * 건너뛰는 모든 경우는 이유와 함께 알리고, 아무것도 저장하지 않는다(몰아서 만들지 않음 — P4).
  */
 export async function runDailyDraft(deps: {
@@ -33,6 +34,8 @@ export async function runDailyDraft(deps: {
   generator: BodyGenerator;
   store: DraftStore;
   notify: (text: string) => Promise<void>;
+  /** REQ-007: 만들어진 초안을 `발행/수정/폐기` 버튼이 달린 승인 카드로 보낸다. */
+  deliverCard: (draft: Draft) => Promise<void>;
 }): Promise<DailyDraftResult> {
   const { now, sources, generator, store, notify } = deps;
   const skip = async (reason: SkipReason, text: string): Promise<DailyDraftResult> => {
@@ -88,14 +91,6 @@ export async function runDailyDraft(deps: {
     },
     picked,
   );
-  const { bannedPhrasesFound, hasExperienceLine } = generated.quality;
-  await notify(
-    [
-      `오늘의 초안이 만들어졌어요 (#${draft.id})`,
-      `제목: ${generated.body.title}`,
-      `품질: 금지 표현 ${bannedPhrasesFound.length}개 · 경험 한 줄 ${hasExperienceLine ? "있음" : "없음"}`,
-      "(승인 버튼은 다음 단계에서 붙어요)",
-    ].join("\n"),
-  );
+  await deliverCardSafely(deps, draft);
   return { status: "created", draft };
 }

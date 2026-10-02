@@ -63,3 +63,33 @@ describe("buildPrompt", () => {
     expect(user).toContain("비교표 행 수가 다릅니다");
   });
 });
+
+describe("buildPrompt — 수정(revision)", () => {
+  const previousBody = { category: "book" as const, title: "이전 제목", intro: "이전 소개", items: [], experienceLine: null };
+
+  it("[REQ-008] 이전 초안과 수정 지시를 모델에게 준다", () => {
+    const { user } = buildPrompt({ ...base, revision: { previousBody, instruction: "소개를 짧게", experienceLine: null } });
+    expect(user).toContain("이전 제목");
+    expect(user).toContain("소개를 짧게");
+  });
+
+  it("[REQ-011] 내가 준 경험 문장이 있으면 그대로 experienceLine에 넣으라고 지시한다", () => {
+    const { system } = buildPrompt({ ...base, revision: { previousBody, instruction: "x", experienceLine: "소음이 생각보다 컸어요" } });
+    expect(system).toContain("소음이 생각보다 컸어요");
+    expect(system).toMatch(/한 글자도/);
+  });
+
+  it("[REQ-011] 수정이어도 경험 문장이 없으면 experienceLine은 null 규칙 그대로", () => {
+    const { system } = buildPrompt({ ...base, revision: { previousBody, instruction: "x", experienceLine: null } });
+    expect(system).toMatch(/experienceLine 필드는 항상 null/);
+  });
+});
+
+describe("buildPrompt — 경험 지우기", () => {
+  it("[REQ-011] clearExperience면 이전 초안에 경험 문장이 있어도 null 규칙을 쓴다", () => {
+    const previousBody = { category: "book" as const, title: "t", intro: "i", items: [], experienceLine: "이전 경험" };
+    const { system } = buildPrompt({ ...base, revision: { previousBody, instruction: "x", experienceLine: null, clearExperience: true } });
+    expect(system).toMatch(/experienceLine 필드는 항상 null/);
+    expect(system).not.toContain("이전 경험");
+  });
+});

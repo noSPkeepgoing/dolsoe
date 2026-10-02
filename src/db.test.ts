@@ -10,15 +10,20 @@ import {
   addLlmCostKrw,
   claimDueJobs,
   countPendingDrafts,
+  deleteKv,
   enqueueJob,
+  getDraft,
   getKv,
   getMonthLlmCostKrw,
   insertDraft,
   listCoveredProducts,
+  listDraftsByStatus,
   markCovered,
   markUpdateProcessed,
   openDb,
+  saveRevision,
   setKv,
+  transitionDraft,
 } from "./db.js";
 
 const NOW = new Date("2026-09-30T00:00:00.000Z");
@@ -168,5 +173,79 @@ describe("schedule jobs", () => {
     const db = openDb(":memory:");
     expect(enqueueJob(db, "daily_draft", new Date("2026-10-01T23:00:00Z"))).toBe(true);
     expect(enqueueJob(db, "daily_draft", new Date("2026-10-02T23:00:00Z"))).toBe(false);
+  });
+});
+
+describe("draft transitions (CAS)", () => {
+  const product: Product = {
+    externalId: "1",
+    source: "yes24",
+    category: "book",
+    affiliate: "yes24",
+    title: "책",
+    url: "https://example.com/1",
+    priceKrw: 1000,
+    priceAsOf: NOW.toISOString(),
+    specs: {},
+  };
+  const body = (title: string, experienceLine: string | null = null): DraftBody => ({
+    category: "book",
+    title,
+    intro: "i",
+    items: [{ productExternalId: "1", oneLiner: "o", reason: "r" }],
+    experienceLine,
+  });
+  const seed = (db: ReturnType<typeof openDb>) =>
+    insertDraft(db, { category: "book", mode: "daily", status: "awaiting_approval", products: [product], body: body("원본"), memo: null, quality: null }, NOW);
+
+  it("[REQ-009] 같은 상태에서 한 번만 전이된다: 두 번째 시도는 변경 행 0(false)", () => {
+    const db = openDb(":memory:");
+    const draft = seed(db);
+    expect(transitionDraft(db, draft.id, "awaiting_approval", "publishing", NOW)).toBe(true);
+    expect(transitionDraft(db, draft.id, "awaiting_approval", "publishing", NOW)).toBe(false);
+    expect(getDraft(db, draft.id)?.status).toBe("publishing");
+  });
+
+  it("[REQ-009] 허용되지 않은 전이는 예외다(DRAFT_TRANSITIONS)", () => {
+    const db = openDb(":memory:");
+    const draft = seed(db);
+    expect(() => transitionDraft(db, draft.id, "awaiting_approval", "published", NOW)).toThrow();
+  });
+
+  it("[REQ-008] 폐기는 초안을 지우지 않고 상태만 바꾼다(기록 보존)", () => {
+    const db = openDb(":memory:");
+    const draft = seed(db);
+    expect(transitionDraft(db, draft.id, "awaiting_approval", "discarded", NOW)).toBe(true);
+    expect(getDraft(db, draft.id)).toMatchObject({ status: "discarded", body: { title: "원본" } });
+  });
+
+  it("[REQ-008][REQ-011] 수정 결과 저장은 drafting일 때만 본문·품질을 바꾸고 대기 상태로 되돌린다", () => {
+    const db = openDb(":memory:");
+    const draft = seed(db);
+    const quality = { bannedPhrasesFound: [], hasExperienceLine: true };
+    expect(saveRevision(db, draft.id, body("수정본", "소음이 컸어요"), quality, NOW)).toBe(false); // 아직 drafting 아님
+    transitionDraft(db, draft.id, "awaiting_approval", "drafting", NOW);
+    expect(saveRevision(db, draft.id, body("수정본", "소음이 컸어요"), quality, NOW)).toBe(true);
+    expect(getDraft(db, draft.id)).toMatchObject({ status: "awaiting_approval", body: { title: "수정본", experienceLine: "소음이 컸어요" }, quality });
+  });
+
+  it("[REQ-008] 없는 초안은 null", () => {
+    expect(getDraft(openDb(":memory:"), 999)).toBeNull();
+  });
+
+  it("[REQ-008] kv 값을 지울 수 있다(수정 대기 표시 해제)", () => {
+    const db = openDb(":memory:");
+    setKv(db, "k", "v");
+    deleteKv(db, "k");
+    expect(getKv(db, "k")).toBeNull();
+  });
+
+  it("[REQ-008] 상태별 초안 목록을 오래된 순으로 돌려준다(기동 시 drafting 복구용)", () => {
+    const db = openDb(":memory:");
+    const a = seed(db);
+    const b = seed(db);
+    transitionDraft(db, b.id, "awaiting_approval", "drafting", NOW);
+    expect(listDraftsByStatus(db, "drafting").map((x) => x.id)).toEqual([b.id]);
+    expect(listDraftsByStatus(db, "awaiting_approval").map((x) => x.id)).toEqual([a.id]);
   });
 });

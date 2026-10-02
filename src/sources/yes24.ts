@@ -40,6 +40,14 @@ const EnvelopeSchema = z.object({
   data: z.object({ items: z.array(ItemSchema) }),
 });
 
+/** 링크 모드에서 사용자가 보낸 상품을 쓸 수 없을 때(없는 상품·수익 링크 없음). 사용자에게 그대로 보여줄 수 있는 문장이다. */
+export class Yes24LinkError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "Yes24LinkError";
+  }
+}
+
 const ErrorEnvelopeSchema = z.object({ errorCode: z.string().optional(), message: z.string().optional() });
 
 const present = (value: string | number | null | undefined): string | null => {
@@ -97,21 +105,42 @@ export class Yes24Source implements ProductSource {
     this.now = options.now ?? (() => new Date());
   }
 
+  /** 호출하고, 200이 아니면 오류 코드를 담은 응답 정보를 돌려준다. 호출 쪽이 어떤 코드를 오류로 볼지 정한다. */
+  private async call(pathAndQuery: string): Promise<{ ok: true; json: unknown } | { ok: false; error: Yes24ApiError }> {
+    const response = await this.fetchFn(`${BASE_URL}${pathAndQuery}`, { headers: { "X-Api-Key": this.apiKey } });
+    const json: unknown = await response.json().catch(() => null);
+    if (response.ok) return { ok: true, json };
+
+    const parsed = ErrorEnvelopeSchema.safeParse(json);
+    const errorCode = (parsed.success ? parsed.data.errorCode : undefined) ?? `HTTP_${response.status}`;
+    const message = (parsed.success ? parsed.data.message : undefined) ?? response.statusText;
+    return { ok: false, error: new Yes24ApiError(`YES24 API ${errorCode}: ${message}`, errorCode, response.status) };
+  }
+
   async fetchCandidates(category: Category): Promise<Product[]> {
     if (category !== "book") throw new Error(`Yes24Source does not support category: ${category}`);
 
-    const response = await this.fetchFn(`${BASE_URL}/v1/category/bestseller?pageSize=${CANDIDATE_PAGE_SIZE}`, {
-      headers: { "X-Api-Key": this.apiKey },
-    });
-    const json: unknown = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      const error = ErrorEnvelopeSchema.safeParse(json);
-      const errorCode = (error.success ? error.data.errorCode : undefined) ?? `HTTP_${response.status}`;
-      if (response.status === 404 && errorCode === "BEST_001") return []; // 결과 없음은 오류가 아니다(REQ-005는 호출 쪽이 처리)
-      const message = (error.success ? error.data.message : undefined) ?? response.statusText;
-      throw new Yes24ApiError(`YES24 API ${errorCode}: ${message}`, errorCode, response.status);
+    const result = await this.call(`/v1/category/bestseller?pageSize=${CANDIDATE_PAGE_SIZE}`);
+    if (!result.ok) {
+      if (result.error.status === 404 && result.error.errorCode === "BEST_001") return []; // 결과 없음은 오류가 아니다(REQ-005는 호출 쪽이 처리)
+      throw result.error;
     }
-    return parseYes24Items(json, this.now());
+    return parseYes24Items(result.json, this.now());
+  }
+
+  /** REQ-006 링크 모드: 상품번호 하나의 상세. 수익 링크(addOnLink)가 없는 상품은 쓸 수 없다(ADR-009). */
+  async fetchItem(itemId: string): Promise<Product> {
+    const result = await this.call(`/v1/goods/itemDetail?searchType=ItemId&query=${encodeURIComponent(itemId)}`);
+    if (!result.ok) {
+      if (result.error.status === 404 && ["GOODS_001", "GOODS_002"].includes(result.error.errorCode)) {
+        throw new Yes24LinkError(`YES24에서 상품 ${itemId}를 찾지 못했어요.`);
+      }
+      throw result.error;
+    }
+    const [product] = parseYes24Items(result.json, this.now());
+    if (product === undefined) {
+      throw new Yes24LinkError(`상품 ${itemId}는 판매 중이 아니거나 수익 링크(애드온)가 없어 쓸 수 없어요.`);
+    }
+    return product;
   }
 }
