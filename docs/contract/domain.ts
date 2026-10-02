@@ -15,12 +15,19 @@ export const DEDUP_DAYS = 30; // REQ-003, PRD Q6 (architect 기본값)
 export const REGENERATE_MAX_RETRIES = 1; // REQ-011·015 자동 재생성 횟수
 export const PUBLISH_MAX_RETRIES = 1; // REQ-013 명확한 실패에 한한 재시도
 export const MONTHLY_LLM_BUDGET_KRW = 10_000; // NFR-001, ADR-007
+export const LLM_MODEL_BODY = "claude-sonnet-5-5"; // ADR-007 본문 생성 모델(2026-10 확인)
+/** 단가(USD / 1M 토큰, 2026-09-25 공식 표). 바뀌면 여기만 고친다. */
+export const LLM_PRICING_USD_PER_MTOK = {
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2 },
+  "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1 },
+} as const;
+export const USD_TO_KRW = 1500; // 비용 상한용 보수적 고정 환율(추정치)
 
 /** REQ-010 대가성 문구. 렌더러가 삽입하며 LLM 출력에 의존하지 않는다. */
 export const DISCLOSURE_TEXTS = {
   coupang: "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.",
-  // TODO(build 1.2 전 확인): 알라딘 제휴 프로그램이 요구하는 정확한 표기 문구
-  aladin: "이 포스팅은 알라딘 제휴 링크를 포함하며, 구매 시 일정액의 수수료를 제공받습니다.",
+  // TODO(YES24 애드온 정책 확인 후 확정): 아래는 임시 문구. 정확한 표기 의무는 미확인(ADR-009)
+  yes24: "이 포스팅은 YES24 애드온 링크를 포함하며, 구매 시 일정액의 수수료를 제공받습니다.",
 } as const;
 
 /** REQ-015 금지 표현(봇이 만든 문장에만 적용, 사용자가 준 경험 문장은 검사 제외). 시작 목록 — 운영하며 승격. */
@@ -37,16 +44,18 @@ export const BANNED_PHRASES = [
 export const CategorySchema = z.enum(["appliance", "book"]); // 생활가전·주방 / 책 추천
 export type Category = z.infer<typeof CategorySchema>;
 export const CATEGORY_ROTATION: readonly Category[] = ["appliance", "book"]; // REQ-001 번갈아
+/** REQ-002 초안 1편에 쓰는 상품 수(G1 비교표 3종 / B2 큐레이션 5권). */
+export const PRODUCTS_PER_DRAFT: Record<Category, number> = { appliance: 3, book: 5 };
 
-export const AffiliateProgramSchema = z.enum(["coupang", "aladin"]);
+export const AffiliateProgramSchema = z.enum(["coupang", "yes24"]);
 export type AffiliateProgram = z.infer<typeof AffiliateProgramSchema>;
 
-export const ProductSourceKindSchema = z.enum(["aladin", "coupang_link"]); // ADR-008 (coupang_api는 승인 확인 후 추가)
+export const ProductSourceKindSchema = z.enum(["yes24", "coupang_link"]); // ADR-008·009 (coupang_api는 승인 확인 후 추가)
 export type ProductSourceKind = z.infer<typeof ProductSourceKindSchema>;
 
 // ── 상품 (REQ-002, REQ-003, REQ-006) ───────────────────────────────
 export const ProductSchema = z.object({
-  externalId: z.string().min(1), // 소스 내 고유 ID(알라딘 itemId, 쿠팡 상품 ID 등) — 중복 제외 키
+  externalId: z.string().min(1), // 소스 내 고유 ID(YES24 상품번호, 쿠팡 상품 ID 등) — 중복 제외 키
   source: ProductSourceKindSchema,
   category: CategorySchema,
   affiliate: AffiliateProgramSchema,

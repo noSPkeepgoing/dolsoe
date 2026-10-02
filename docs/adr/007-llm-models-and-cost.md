@@ -14,5 +14,10 @@ Anthropic SDK 직접 호출. 본문 생성은 Sonnet급, 금지 표현·경험 �
 ## 버린 대안
 전부 저가 모델(초안 품질↓ → 수정 횟수↑), 프롬프트 캐싱(호출이 적어 효과 미미 — 재검토 항목).
 
+## 구현 노트 (build 1.2, 2026-10-01)
+- 모델 ID·단가 확인: 본문 `claude-sonnet-5-5`($2/$10 per MTok), 검증용 `claude-haiku-4-5`($1/$5). 단가는 계약 상수(`LLM_PRICING_USD_PER_MTOK`)에 있다.
+- 금지 표현·경험 문장 보존·골격 검사는 모두 기계(문자열·구조)로 충분해서 **Haiku 검증 호출은 도입하지 않았다**(YAGNI). 필요해지면 `generate.ts` 루프에 추가.
+- Sonnet 5.5는 샘플링 값·`thinking: {type:"disabled"}`·강제 `tool_choice`·prefill을 400으로 거부 → `body-generator.ts`는 보내지 않고(테스트로 고정), 사고는 기본(적응형)에 맡긴다. 사고 토큰도 `max_tokens`에 포함되므로 16,000으로 둔다.
+
 ## 결과/트레이드오프
 상한 초과 시 그 달 남은 기간은 링크 모드(수동 요청)만 동작하도록 할지는 build에서 확정.

@@ -31,11 +31,12 @@ dolsoe/
 │   ├── main.ts               # 단일 진입점: 봇+스케줄러 기동 (launchd KeepAlive)
 │   ├── config.ts             # env → zod 검증
 │   ├── db.ts                 # SQLite 접근·마이그레이션, row↔도메인 매퍼 (유일한 SQL 위치)
-│   ├── scheduler.ts          # 60초 tick, due_at 실행, 기동 시 누락 처리
+│   ├── schedule/             # time.ts(KST 계산·기동 계획), scheduler.ts(60초 tick, due_at 실행)
+│   ├── jobs/                 # daily-draft.ts: 일일 초안 작업(상한→소스→중복→생성→저장). 의존성은 인자로 주입
 │   ├── bot/                  # grammY: 미들웨어(소유자 필터), 핸들러, 초안 카드 포맷터
-│   ├── draft/                # 생성기·품질검사·상태 전이(CAS)·번갈아/중복/상한 규칙
-│   ├── sources/              # ProductSource 어댑터: aladin.ts, coupang-link.ts
-│   ├── llm.ts                # Anthropic 호출, 출력 zod 검증, 사용량 기록
+│   ├── draft/                # rules.ts(번갈아·중복·상한), quality-check.ts, generate.ts(생성 루프), store.ts(SQLite 저장소 어댑터)
+│   ├── sources/              # ProductSource 인터페이스 + 어댑터: yes24.ts, coupang-link.ts(1.3)
+│   ├── llm/                  # prompt.ts(순수), body-generator.ts(Anthropic 호출·zod 검증), cost.ts, usage.ts
 │   └── publish/              # publisher.ts(인터페이스), orchestrator.ts, handoff.ts, naver.ts(1.5), renderer.ts
 └── data/dolsoe.db            # 런타임 생성 (.gitignore)
 ```
@@ -61,7 +62,7 @@ dolsoe/
 ## 8. 테스트 (TDD)
 - 이 프로젝트는 UI가 텔레그램뿐이라 백엔드 로직 전부 `(자동)` — 예외 없이 테스트 먼저(red→green). `(관통)`(REQ-012)는 실제 텔레그램·네이버로 종단 확인.
 - 테스트 파일은 대상 옆 `*.test.ts`. **테스트 이름(`describe`/`it`)에 REQ ID 포함** → `gate.sh`가 `grep`으로 추적.
-- 외부 API(Anthropic·텔레그램·알라딘·쿠팡·네이버)는 테스트에서 모두 모킹한다. 실제 네트워크 호출을 하는 테스트는 만들지 않는다. 시간은 주입 가능한 `now()`로 받아 KST 경계를 테스트한다(NFR-002).
+- 외부 API(Anthropic·텔레그램·YES24·쿠팡·네이버)는 테스트에서 모두 모킹한다. 실제 네트워크 호출을 하는 테스트는 만들지 않는다. 시간은 주입 가능한 `now()`로 받아 KST 경계를 테스트한다(NFR-002).
 
 ## 9. 주석
 - "무엇"이 아니라 "왜". 비직관적 결정엔 관련 ADR을 한 줄로 링크.

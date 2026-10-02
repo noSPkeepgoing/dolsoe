@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { loadConfig } from "./config.js";
+import { loadConfig, requireDailyDraftKeys } from "./config.js";
 
 const VALID_ENV = { TELEGRAM_BOT_TOKEN: "123:abc", OWNER_CHAT_ID: "987654321" };
 
@@ -23,5 +23,19 @@ describe("loadConfig", () => {
   it("[REQ-014] 소유자 chat_id가 없거나 숫자가 아니면 실패한다(소유자 없이 기동 금지)", () => {
     expect(() => loadConfig({ TELEGRAM_BOT_TOKEN: "t" })).toThrow(/OWNER_CHAT_ID/);
     expect(() => loadConfig({ TELEGRAM_BOT_TOKEN: "t", OWNER_CHAT_ID: "abc" })).toThrow(/OWNER_CHAT_ID/);
+  });
+});
+
+describe("requireDailyDraftKeys", () => {
+  it("[NFR-003] 일일 초안에 필요한 키가 모두 있으면 값을 돌려준다", () => {
+    const config = loadConfig({ ...VALID_ENV, ANTHROPIC_API_KEY: "sk-ant-x", YES24_API_KEY: "yk_x" });
+    expect(requireDailyDraftKeys(config)).toEqual({ anthropicApiKey: "sk-ant-x", yes24ApiKey: "yk_x" });
+  });
+
+  it("[NFR-003] 없는 키 이름을 모두 알려주며 실패한다(조용히 기능을 끄지 않는다)", () => {
+    const config = loadConfig(VALID_ENV);
+    expect(() => requireDailyDraftKeys(config)).toThrow(/ANTHROPIC_API_KEY.*YES24_API_KEY/);
+    const onlyYes24Missing = loadConfig({ ...VALID_ENV, ANTHROPIC_API_KEY: "k" });
+    expect(() => requireDailyDraftKeys(onlyYes24Missing)).toThrow(/YES24_API_KEY/);
   });
 });
