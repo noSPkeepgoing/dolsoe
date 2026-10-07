@@ -87,6 +87,7 @@ describe("Yes24Source", () => {
     expect(products).toHaveLength(1);
     const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toMatch(/^https:\/\/apis\.yes24\.com\/v1\/category\/bestseller\?/);
+    expect(new URL(url).searchParams.get("categoryId")).toBe("001"); // 실서버는 categoryId 없으면 400 PARAM_001
     expect(new Headers(init.headers).get("X-Api-Key")).toBe("yk_test");
   });
 

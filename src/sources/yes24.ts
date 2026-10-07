@@ -7,6 +7,8 @@ import type { ProductSource } from "./product-source.js";
 const BASE_URL = "https://apis.yes24.com";
 /** 광고·품절·성인물·수익 링크 없음을 걸러내고도 한 편(5권)이 남도록 넉넉히 가져온다. */
 const CANDIDATE_PAGE_SIZE = 30;
+/** 종합 베스트셀러의 카테고리(국내도서). 실서버는 categoryId가 없으면 400 PARAM_001로 거절한다. */
+const BESTSELLER_CATEGORY_ID = "001";
 
 export class Yes24ApiError extends Error {
   constructor(
@@ -120,7 +122,7 @@ export class Yes24Source implements ProductSource {
   async fetchCandidates(category: Category): Promise<Product[]> {
     if (category !== "book") throw new Error(`Yes24Source does not support category: ${category}`);
 
-    const result = await this.call(`/v1/category/bestseller?pageSize=${CANDIDATE_PAGE_SIZE}`);
+    const result = await this.call(`/v1/category/bestseller?categoryId=${BESTSELLER_CATEGORY_ID}&pageSize=${CANDIDATE_PAGE_SIZE}`);
     if (!result.ok) {
       if (result.error.status === 404 && result.error.errorCode === "BEST_001") return []; // 결과 없음은 오류가 아니다(REQ-005는 호출 쪽이 처리)
       throw result.error;
