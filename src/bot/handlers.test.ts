@@ -37,8 +37,10 @@ const bodyFor = (input: GenerateBodyInput): DraftBody => {
     ? {
         category: "book",
         title: input.revision === undefined ? "새 초안" : `수정됨: ${input.revision.instruction}`,
-        intro: "소개",
-        items: input.products.map((p) => ({ productExternalId: p.externalId, oneLiner: "한 줄", reason: "이유" })),
+        synopsis: "s",
+        mood: "m",
+        recommendedFor: "r",
+        highlights: "h",
         experienceLine: experience,
       }
     : {
@@ -65,7 +67,7 @@ function setup(makePublishers: (sendChunk: (text: string) => Promise<void>) => P
       mode: "daily",
       status: "awaiting_approval",
       products: [product("1")],
-      body: { category: "book", title: "원본", intro: "소개", items: [{ productExternalId: "1", oneLiner: "o", reason: "r" }], experienceLine: null },
+      body: { category: "book", title: "원본", synopsis: "s", mood: "m", recommendedFor: "r", highlights: "h", experienceLine: null },
       memo: null,
       quality: { bannedPhrasesFound: [], hasExperienceLine: false },
     },

@@ -17,14 +17,13 @@ const product = (id: string): Product => ({
   specs: {},
 });
 
-const body = (intro = "소개"): DraftBody => ({
+const body = (synopsis = "줄거리"): DraftBody => ({
   category: "book",
-  title: "퇴근 후 에세이 2권",
-  intro,
-  items: [
-    { productExternalId: "1", oneLiner: "한 줄", reason: "이유" },
-    { productExternalId: "2", oneLiner: "한 줄", reason: "이유" },
-  ],
+  title: "퇴근 후 읽기 좋은 에세이",
+  synopsis,
+  mood: "분위기",
+  recommendedFor: "이런 사람에게",
+  highlights: "인상 깊은 대목",
   experienceLine: null,
 });
 
@@ -33,7 +32,7 @@ const draft = (over: Partial<Draft> = {}): Draft => ({
   category: "book",
   mode: "daily",
   status: "awaiting_approval",
-  products: [product("1"), product("2")],
+  products: [product("1")],
   body: body(),
   memo: null,
   quality: { bannedPhrasesFound: [], hasExperienceLine: false },
@@ -46,7 +45,7 @@ describe("formatCard", () => {
   it("[REQ-007] 본문 미리보기와 `발행 / 수정 / 폐기` 버튼 3개가 함께 보인다", () => {
     const { text, buttons } = formatCard(draft());
     expect(text).toContain("초안 #12");
-    expect(text).toContain("퇴근 후 에세이 2권");
+    expect(text).toContain("퇴근 후 읽기 좋은 에세이");
     expect(buttons.map((b) => b.label)).toEqual(["발행", "수정", "폐기"]);
   });
 
@@ -67,11 +66,27 @@ describe("formatCard", () => {
     expect(formatCard(dirty).text).toContain("품질: 금지 표현 2개 · 경험 한 줄 있음");
   });
 
+  it("[REQ-016] 책 카드에 후기 근거 건수를 보여주고, 없으면 근거 없음을 표시한다(URL은 카드에 넣지 않는다)", () => {
+    const withSources = formatCard(draft({ reviewSources: ["https://blog.example.com/a", "https://blog.example.com/b"] })).text;
+    expect(withSources).toContain("후기 2건 참고");
+    expect(withSources).not.toContain("https://");
+    expect(formatCard(draft()).text).toContain("후기 근거 없음");
+    expect(formatCard(draft({ reviewSources: [] })).text).toContain("후기 근거 없음");
+  });
+
+  it("[REQ-016] 가전 카드에는 후기 줄이 없다", () => {
+    const appliance = draft({
+      category: "appliance",
+      body: { category: "appliance", title: "t", verdict: "v", comparison: { headers: ["a", "b"], rows: [["1", "2"]] }, recommendations: [{ forWhom: "x", productExternalId: "1", reason: "r" }], experienceLine: null },
+    });
+    expect(formatCard(appliance).text).not.toContain("후기");
+  });
+
   it("[REQ-007] 모드·카테고리·상품 수·가격 기준일(KST)을 보여준다", () => {
     const text = formatCard(draft()).text;
     expect(text).toContain("책 추천");
     expect(text).toContain("기본 모드");
-    expect(text).toContain("YES24 2권");
+    expect(text).toContain("YES24 1권");
     expect(text).toContain("가격 기준 10/02");
     expect(formatCard(draft({ mode: "link" })).text).toContain("링크 모드");
   });

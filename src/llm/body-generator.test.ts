@@ -20,8 +20,10 @@ const product: Product = {
 const body: DraftBody = {
   category: "book",
   title: "t",
-  intro: "i",
-  items: [{ productExternalId: "1", oneLiner: "o", reason: "r" }],
+  synopsis: "s",
+  mood: "m",
+  recommendedFor: "r",
+  highlights: "h",
   experienceLine: null,
 };
 

@@ -5,6 +5,7 @@ import { MAX_PENDING_DRAFTS, MONTHLY_LLM_BUDGET_KRW, PRODUCTS_PER_DRAFT } from "
 
 import type { NewDraft } from "../db.js";
 import type { BodyGenerator, GenerateBodyInput } from "../draft/generate.js";
+import type { ReviewCollector } from "../draft/review.js";
 
 import type { DraftStore } from "./daily-draft.js";
 import { runLinkDraft } from "./link-draft.js";
@@ -30,8 +31,10 @@ const bodyFor = (input: GenerateBodyInput): DraftBody =>
     ? {
         category: "book",
         title: "책 소개",
-        intro: "소개",
-        items: input.products.map((p) => ({ productExternalId: p.externalId, oneLiner: "한 줄", reason: "이유" })),
+        synopsis: "s",
+        mood: "m",
+        recommendedFor: "r",
+        highlights: "h",
         experienceLine: null,
       }
     : {
@@ -43,7 +46,7 @@ const bodyFor = (input: GenerateBodyInput): DraftBody =>
         experienceLine: null,
       };
 
-function setup(over: { costKrw?: number; pending?: number; resolveYes24?: (id: string) => Promise<Product>; generator?: BodyGenerator } = {}) {
+function setup(over: { costKrw?: number; pending?: number; resolveYes24?: (id: string) => Promise<Product>; generator?: BodyGenerator; reviewCollector?: ReviewCollector } = {}) {
   const saved: NewDraft[] = [];
   const store: DraftStore = {
     countPending: () => over.pending ?? 0,
@@ -59,7 +62,8 @@ function setup(over: { costKrw?: number; pending?: number; resolveYes24?: (id: s
   const notify = vi.fn<(text: string) => Promise<void>>(async () => {});
   const deliverCard = vi.fn<(draft: Draft) => Promise<void>>(async () => {});
   const resolveYes24 = over.resolveYes24 ?? vi.fn(async (id: string) => yes24Product(id));
-  const run = (text: string) => runLinkDraft({ now: () => NOW, store, generator, resolveYes24, notify, deliverCard }, text);
+  const run = (text: string) =>
+    runLinkDraft({ now: () => NOW, store, generator, resolveYes24, notify, deliverCard, ...(over.reviewCollector === undefined ? {} : { reviewCollector: over.reviewCollector }) }, text);
   return { saved, notify, deliverCard, generator, resolveYes24, run };
 }
 
@@ -91,6 +95,32 @@ describe("runLinkDraft", () => {
     await run(YES24);
     expect(resolveYes24).toHaveBeenCalledWith("900000001");
     expect(saved[0]).toMatchObject({ category: "book", mode: "link", memo: null });
+  });
+
+  it("[REQ-016] YES24 책 링크는 후기도 수집해 노트와 출처를 반영하고, 쿠팡(가전) 링크는 수집하지 않는다", async () => {
+    const reviewCollector: ReviewCollector = { collect: vi.fn(async () => ({ notes: "- 메모", sources: ["https://blog.example.com/a"] })) };
+    const book = setup({ reviewCollector });
+    await book.run(YES24);
+    expect(reviewCollector.collect).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(book.generator.generateBody).mock.calls[0]![0]).toMatchObject({ reviewNotes: "- 메모" });
+    expect(book.saved[0]).toMatchObject({ reviewSources: ["https://blog.example.com/a"] });
+
+    const appliance = setup({ reviewCollector });
+    await appliance.run(`${COUPANG}\n제품`);
+    expect(reviewCollector.collect).toHaveBeenCalledTimes(1);
+  });
+
+  it("[REQ-016] 후기 수집이 실패해도 링크 모드 책 초안은 만든다", async () => {
+    const reviewCollector: ReviewCollector = { collect: async () => { throw new Error("검색 서버 오류"); } };
+    const { saved, run } = setup({ reviewCollector });
+    await expect(run(YES24)).resolves.toMatchObject({ status: "created" });
+    expect(saved[0]).toMatchObject({ reviewSources: [] });
+  });
+
+  it("[REQ-002] 책은 한 권짜리 글이라 YES24 링크를 여러 개 보내면 안내한다(B3)", async () => {
+    const { saved, run } = setup();
+    await expect(run(`${YES24}\nhttps://www.yes24.com/Product/Goods/900000002`)).resolves.toEqual({ status: "skipped", reason: "too_many" });
+    expect(saved).toEqual([]);
   });
 
   it("[REQ-006] 링크가 없는 메시지는 아무것도 하지 않고 not_link로 알려준다(안내는 호출 쪽)", async () => {

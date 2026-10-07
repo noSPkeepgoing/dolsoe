@@ -14,6 +14,7 @@ import { recoverStuckDrafts } from "./draft/approval.js";
 import { createApprovalStore, createDraftStore, createPublishStore } from "./draft/store.js";
 import { runDailyDraft } from "./jobs/daily-draft.js";
 import { createBodyGenerator } from "./llm/body-generator.js";
+import { createReviewCollector } from "./llm/review-collector.js";
 import { recordLlmUsage } from "./llm/usage.js";
 import { createHandoffPublisher } from "./publish/handoff.js";
 import { recoverStuckPublishing, type PublishDeps } from "./publish/orchestrator.js";
@@ -37,10 +38,12 @@ async function main(): Promise<void> {
   });
 
   const messenger = createMessenger(bot.api, config.OWNER_CHAT_ID);
-  const generator = createBodyGenerator({
-    client: new Anthropic({ apiKey: keys.anthropicApiKey }),
-    onUsage: (usage) => recordLlmUsage(db, now(), usage),
-  });
+  const anthropic = new Anthropic({ apiKey: keys.anthropicApiKey });
+  const onUsage = (usage: Parameters<typeof recordLlmUsage>[2]): void => recordLlmUsage(db, now(), usage);
+  const generator = createBodyGenerator({ client: anthropic, onUsage });
+  // REQ-016: 책 후기 수집(웹검색). 실패해도 초안은 "후기 근거 없음"으로 계속 만든다.
+  const reviewCollector = createReviewCollector({ client: anthropic, onUsage });
+  const onReviewFailure = (reason: string): void => console.warn(`[review] ${reason}`);
   const yes24 = new Yes24Source({ apiKey: keys.yes24ApiKey });
   const store = createDraftStore(db, now);
 
@@ -56,7 +59,7 @@ async function main(): Promise<void> {
   registerHandlers(bot, {
     approval,
     publish,
-    link: { now, generator, store, resolveYes24: (itemId) => yes24.fetchItem(itemId), ...messenger },
+    link: { now, generator, store, resolveYes24: (itemId) => yes24.fetchItem(itemId), reviewCollector, onReviewFailure, ...messenger },
   });
 
   // 수정 중 재시작으로 멈춘 초안을 먼저 되돌린다(안 그러면 승인 대기 상한을 계속 차지한다).
@@ -66,7 +69,7 @@ async function main(): Promise<void> {
   const scheduler = createScheduler({
     db,
     now,
-    runDailyDraft: () => runDailyDraft({ now, sources: [yes24], generator, store, ...messenger }),
+    runDailyDraft: () => runDailyDraft({ now, sources: [yes24], generator, store, reviewCollector, onReviewFailure, ...messenger }),
     notify: messenger.notify,
   });
 

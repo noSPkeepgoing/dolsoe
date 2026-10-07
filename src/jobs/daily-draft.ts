@@ -4,6 +4,7 @@ import { DEDUP_DAYS, PRODUCTS_PER_DRAFT } from "@contract/domain.js";
 import type { NewDraft } from "../db.js";
 import { deliverCardSafely } from "../draft/deliver.js";
 import { generateDraftBody, type BodyGenerator } from "../draft/generate.js";
+import { gatherReviews, type ReviewCollector } from "../draft/review.js";
 import { filterRecentlyCovered, isPendingCapReached, nextCategory } from "../draft/rules.js";
 import { isBudgetExceeded } from "../llm/cost.js";
 import type { ProductSource } from "../sources/product-source.js";
@@ -36,6 +37,10 @@ export async function runDailyDraft(deps: {
   notify: (text: string) => Promise<void>;
   /** REQ-007: 만들어진 초안을 `발행/수정/폐기` 버튼이 달린 승인 카드로 보낸다. */
   deliverCard: (draft: Draft) => Promise<void>;
+  /** REQ-016: 책 후기 수집기. 없으면 "후기 근거 없음"으로 만든다. */
+  reviewCollector?: ReviewCollector;
+  /** 후기 수집이 실패했을 때 이유를 남기는 곳(초안은 계속 만든다). */
+  onReviewFailure?: (reason: string) => void;
 }): Promise<DailyDraftResult> {
   const { now, sources, generator, store, notify } = deps;
   const skip = async (reason: SkipReason, text: string): Promise<DailyDraftResult> => {
@@ -72,9 +77,17 @@ export async function runDailyDraft(deps: {
   }
   const picked = fresh.slice(0, needed);
 
+  const reviews = await gatherReviews(category, picked, deps.reviewCollector, deps.onReviewFailure);
   let generated: Awaited<ReturnType<typeof generateDraftBody>>;
   try {
-    generated = await generateDraftBody({ generator, category, products: picked, memo: null });
+    generated = await generateDraftBody({
+      generator,
+      category,
+      products: picked,
+      memo: null,
+      ...(reviews.reviewNotes === undefined ? {} : { reviewNotes: reviews.reviewNotes }),
+      ...(reviews.reviewExcerpts === undefined ? {} : { reviewExcerpts: reviews.reviewExcerpts }),
+    });
   } catch (error) {
     return skip("generation_error", `초안 생성에 실패해 오늘은 건너뛰었어요: ${messageOf(error)}`);
   }
@@ -88,6 +101,7 @@ export async function runDailyDraft(deps: {
       body: generated.body,
       memo: null,
       quality: generated.quality,
+      ...(reviews.reviewSources === undefined ? {} : { reviewSources: reviews.reviewSources }),
     },
     picked,
   );

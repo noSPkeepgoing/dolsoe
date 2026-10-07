@@ -20,12 +20,11 @@ const product = (id: string, over: Partial<Product> = {}): Product => ({
 
 const bookBody = (experienceLine: string | null = null): DraftBody => ({
   category: "book",
-  title: "퇴근 후 에세이 2권",
-  intro: "가볍게 읽히는 책을 골랐어요",
-  items: [
-    { productExternalId: "1", oneLiner: "첫 책 한 줄", reason: "첫 책 이유" },
-    { productExternalId: "2", oneLiner: "둘째 책 한 줄", reason: "둘째 책 이유" },
-  ],
+  title: "퇴근 후 읽기 좋은 에세이 한 권",
+  synopsis: "줄거리 문단이에요",
+  mood: "분위기 문단이에요",
+  recommendedFor: "이런 사람 문단이에요",
+  highlights: "인상 깊은 대목 문단이에요",
   experienceLine,
 });
 
@@ -52,11 +51,18 @@ const draft = (body: DraftBody, products: Product[]): Draft => ({
 });
 
 describe("renderPostText", () => {
-  const books = draft(bookBody(), [product("1"), product("2")]);
+  const books = draft(bookBody(), [product("1")]);
 
-  it("[REQ-002] 책 본문은 제목→책마다 한 줄 소개와 이유→구매 링크 순서다", () => {
+  it("[REQ-002] 책 본문은 제목→줄거리→분위기→이런 사람에게→인상 깊은 대목→구매 링크 순서다(B3 한 권 리뷰)", () => {
     const text = renderPostText(books);
-    const order = ["퇴근 후 에세이 2권", "첫 책 한 줄", "둘째 책 이유", "https://www.yes24.com/addon/1"].map((s) => text.indexOf(s));
+    const order = [
+      "퇴근 후 읽기 좋은 에세이 한 권",
+      "줄거리 문단이에요",
+      "분위기 문단이에요",
+      "이런 사람 문단이에요",
+      "인상 깊은 대목 문단이에요",
+      "https://www.yes24.com/addon/1",
+    ].map((s) => text.indexOf(s));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
@@ -81,14 +87,14 @@ describe("renderPostText", () => {
   });
 
   it("[REQ-011] 가격 정보가 없으면 가격 줄 없이 링크만 적는다", () => {
-    const text = renderPostText(draft(bookBody(), [product("1", { priceKrw: null, priceAsOf: null }), product("2")]));
+    const text = renderPostText(draft(bookBody(), [product("1", { priceKrw: null, priceAsOf: null })]));
     expect(text).toContain("https://www.yes24.com/addon/1");
     expect(text).not.toContain("null");
   });
 
   it("[REQ-011] 경험 한 줄이 비어 있으면 경험 문단이 빠지고, 있으면 원문 그대로 들어간다", () => {
     expect(renderPostText(books)).not.toContain("내 경험");
-    const text = renderPostText(draft(bookBody("소음이 생각보다 컸어요"), [product("1"), product("2")]));
+    const text = renderPostText(draft(bookBody("소음이 생각보다 컸어요"), [product("1")]));
     expect(text).toContain("내 경험");
     expect(text).toContain("소음이 생각보다 컸어요");
   });
@@ -96,15 +102,15 @@ describe("renderPostText", () => {
 
 describe("renderPreview", () => {
   it("[REQ-007] 미리보기는 한도를 넘으면 잘리고 잘렸음을 표시한다", () => {
-    const long = draft({ ...bookBody(), intro: "가".repeat(5000) } as DraftBody, [product("1"), product("2")]);
+    const long = draft({ ...bookBody(), synopsis: "가".repeat(5000) } as DraftBody, [product("1")]);
     const preview = renderPreview(long, 300);
     expect(preview.length).toBeLessThanOrEqual(300);
     expect(preview).toContain("…");
   });
 
   it("[REQ-007] 한도 안이면 그대로 보여준다(링크·대가성 문구는 미리보기에 넣지 않는다)", () => {
-    const preview = renderPreview(draft(bookBody(), [product("1"), product("2")]), 2500);
-    expect(preview).toContain("퇴근 후 에세이 2권");
+    const preview = renderPreview(draft(bookBody(), [product("1")]), 2500);
+    expect(preview).toContain("퇴근 후 읽기 좋은 에세이 한 권");
     expect(preview).not.toContain("https://");
   });
 });

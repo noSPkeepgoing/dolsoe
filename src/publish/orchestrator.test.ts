@@ -27,8 +27,10 @@ const product = (id: string): Product => ({
 const body: DraftBody = {
   category: "book",
   title: "원본 제목",
-  intro: "소개",
-  items: [{ productExternalId: "1", oneLiner: "한 줄", reason: "이유" }],
+  synopsis: "s",
+  mood: "m",
+  recommendedFor: "r",
+  highlights: "h",
   experienceLine: null,
 };
 

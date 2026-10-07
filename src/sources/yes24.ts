@@ -1,14 +1,13 @@
 import { z } from "zod";
 
-import type { Category, Product } from "@contract/domain.js";
+import type { BookDetail, Category, Product } from "@contract/domain.js";
+import { BOOK_CANDIDATE_CATEGORY_IDS, BOOK_DETAIL_MAX_CHARS } from "@contract/domain.js";
 
 import type { ProductSource } from "./product-source.js";
 
 const BASE_URL = "https://apis.yes24.com";
 /** 광고·품절·성인물·수익 링크 없음을 걸러내고도 한 편(5권)이 남도록 넉넉히 가져온다. */
 const CANDIDATE_PAGE_SIZE = 30;
-/** 종합 베스트셀러의 카테고리(국내도서). 실서버는 categoryId가 없으면 400 PARAM_001로 거절한다. */
-const BESTSELLER_CATEGORY_ID = "001";
 
 export class Yes24ApiError extends Error {
   constructor(
@@ -34,6 +33,11 @@ const ItemSchema = z.object({
   shopPrice: z.number().int().nonnegative().nullish(),
   publishDate: z.string().nullish(),
   addOnLink: z.string().nullish(),
+  // 소개문·목차(REQ-002). 목록 응답에도 들어 있다. 모양이 달라져도 후보를 버리지 않도록 관대하게 읽는다.
+  contentDetail: z
+    .object({ bookIntroduction: z.string().nullish(), tableOfContents: z.string().nullish() })
+    .nullish()
+    .catch(undefined),
 });
 type Item = z.infer<typeof ItemSchema>;
 
@@ -57,6 +61,25 @@ const present = (value: string | number | null | undefined): string | null => {
   return text.length > 0 ? text : null;
 };
 
+const HTML_ENTITIES: Record<string, string> = { "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
+
+/** 소개문·목차용: HTML 태그·엔티티·여분 공백을 걷고 BOOK_DETAIL_MAX_CHARS로 자른다. 비면 null. */
+function cleanDetailText(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  const text = raw
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(?:nbsp|amp|lt|gt|quot|#39);/g, (entity) => HTML_ENTITIES[entity] ?? entity)
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length === 0 ? null : text.slice(0, BOOK_DETAIL_MAX_CHARS).trimEnd();
+}
+
+function toBookDetail(item: Item): BookDetail | undefined {
+  const introduction = cleanDetailText(item.contentDetail?.bookIntroduction);
+  const tableOfContents = cleanDetailText(item.contentDetail?.tableOfContents);
+  return introduction === null && tableOfContents === null ? undefined : { introduction, tableOfContents };
+}
+
 function toProduct(item: Item, addOnLink: string, now: Date): Product {
   const specs: Record<string, string> = {};
   const entries: [string, string | null][] = [
@@ -67,6 +90,7 @@ function toProduct(item: Item, addOnLink: string, now: Date): Product {
     ["ISBN", present(item.isbn13)],
   ];
   for (const [key, value] of entries) if (value !== null) specs[key] = value;
+  const bookDetail = toBookDetail(item);
   return {
     externalId: String(item.itemId),
     source: "yes24",
@@ -77,6 +101,7 @@ function toProduct(item: Item, addOnLink: string, now: Date): Product {
     priceKrw: item.salePrice,
     priceAsOf: now.toISOString(),
     specs,
+    ...(bookDetail === undefined ? {} : { bookDetail }),
   };
 }
 
@@ -93,6 +118,23 @@ export function parseYes24Items(json: unknown, now: Date): Product[] {
     products.push(toProduct(item, addOnLink, now));
   }
   return products;
+}
+
+/** 목록들을 순위대로 한 권씩 번갈아 합치고, 여러 목록에 걸친 같은 책은 먼저 나온 한 번만 남긴다. */
+function interleaveUnique(lists: readonly Product[][]): Product[] {
+  const seen = new Set<string>();
+  const merged: Product[] = [];
+  const longest = Math.max(0, ...lists.map((list) => list.length));
+  for (let rank = 0; rank < longest; rank++) {
+    for (const list of lists) {
+      const product = list[rank];
+      if (product !== undefined && !seen.has(product.externalId)) {
+        seen.add(product.externalId);
+        merged.push(product);
+      }
+    }
+  }
+  return merged;
 }
 
 export class Yes24Source implements ProductSource {
@@ -119,15 +161,23 @@ export class Yes24Source implements ProductSource {
     return { ok: false, error: new Yes24ApiError(`YES24 API ${errorCode}: ${message}`, errorCode, response.status) };
   }
 
+  /**
+   * REQ-001·005: 소설·에세이 베스트셀러(ADR-010)를 카테고리별로 받아 순위대로 번갈아 섞는다.
+   * 실서버는 categoryId가 없으면 400 PARAM_001로 거절한다(2026-10-07 실호출로 확인). 한 카테고리의 "결과 없음"은 건너뛴다.
+   */
   async fetchCandidates(category: Category): Promise<Product[]> {
     if (category !== "book") throw new Error(`Yes24Source does not support category: ${category}`);
 
-    const result = await this.call(`/v1/category/bestseller?categoryId=${BESTSELLER_CATEGORY_ID}&pageSize=${CANDIDATE_PAGE_SIZE}`);
-    if (!result.ok) {
-      if (result.error.status === 404 && result.error.errorCode === "BEST_001") return []; // 결과 없음은 오류가 아니다(REQ-005는 호출 쪽이 처리)
-      throw result.error;
+    const lists: Product[][] = [];
+    for (const categoryId of BOOK_CANDIDATE_CATEGORY_IDS) {
+      const result = await this.call(`/v1/category/bestseller?categoryId=${categoryId}&pageSize=${CANDIDATE_PAGE_SIZE}`);
+      if (!result.ok) {
+        if (result.error.status === 404 && result.error.errorCode === "BEST_001") continue; // 결과 없음은 오류가 아니다(REQ-005는 호출 쪽이 처리)
+        throw result.error;
+      }
+      lists.push(parseYes24Items(result.json, this.now()));
     }
-    return parseYes24Items(result.json, this.now());
+    return interleaveUnique(lists);
   }
 
   /** REQ-006 링크 모드: 상품번호 하나의 상세. 수익 링크(addOnLink)가 없는 상품은 쓸 수 없다(ADR-009). */

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { DraftBody, Product } from "@contract/domain.js";
@@ -93,8 +94,10 @@ const sampleProduct = (externalId: string): Product => ({
 const sampleBody: DraftBody = {
   category: "book",
   title: "이번 주 베스트셀러",
-  intro: "소개",
-  items: [{ productExternalId: "1", oneLiner: "한 줄", reason: "이유" }],
+  synopsis: "s",
+  mood: "m",
+  recommendedFor: "r",
+  highlights: "h",
   experienceLine: null,
 };
 
@@ -118,6 +121,43 @@ describe("insertDraft / countPendingDrafts", () => {
     expect(draft.body).toEqual(sampleBody);
     expect(draft.products[0]?.specs).toEqual({ 저자: "누구" });
     expect(draft.createdAt).toBe(NOW.toISOString());
+  });
+
+  it("[REQ-016] 후기 출처 URL과 책 소개문·목차가 저장·조회 왕복되고, 출처 없이 저장한 초안은 reviewSources가 없다", () => {
+    const db = openDb(":memory:");
+    const product: Product = { ...sampleProduct("1"), bookDetail: { introduction: "소개문", tableOfContents: null } };
+    const base = { category: "book" as const, mode: "daily" as const, status: "awaiting_approval" as const, products: [product], body: sampleBody, memo: null, quality: null };
+    const withSources = insertDraft(db, { ...base, reviewSources: ["https://blog.example.com/a", "https://blog.example.com/b"] }, NOW);
+    expect(withSources.reviewSources).toEqual(["https://blog.example.com/a", "https://blog.example.com/b"]);
+    expect(getDraft(db, withSources.id)?.products[0]?.bookDetail).toEqual({ introduction: "소개문", tableOfContents: null });
+    const without = insertDraft(db, base, NOW);
+    expect(without.reviewSources).toBeUndefined();
+  });
+
+  it("[REQ-016] 마이그레이션이 옛 DB(v3)의 초안을 지우지 않고 후기 출처 컬럼만 더한다", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dolsoe-"));
+    tempDirs.push(dir);
+    const file = path.join(dir, "old.db");
+    const old = new Database(file);
+    // v1~v3까지만 적용된 DB를 흉내 낸다 — 이 컬럼이 생기기 전에 저장된 초안
+    old.exec(`CREATE TABLE processed_updates (update_id INTEGER PRIMARY KEY, processed_at TEXT NOT NULL);
+      CREATE TABLE drafts (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, mode TEXT NOT NULL, status TEXT NOT NULL, products_json TEXT NOT NULL, body_json TEXT, memo TEXT, quality_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE covered_products (source TEXT NOT NULL, external_id TEXT NOT NULL, covered_at TEXT NOT NULL, PRIMARY KEY (source, external_id));
+      CREATE TABLE schedule_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, due_at TEXT NOT NULL, done_at TEXT);
+      CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE llm_usage (month TEXT PRIMARY KEY, estimated_cost_krw REAL NOT NULL);
+      CREATE TABLE publish_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id INTEGER NOT NULL REFERENCES drafts (id), mode TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, result_json TEXT);`);
+    old.prepare("INSERT INTO drafts (category, mode, status, products_json, body_json, created_at, updated_at) VALUES ('book','daily','published',?,?,?,?)")
+      .run(JSON.stringify([sampleProduct("1")]), JSON.stringify(sampleBody), NOW.toISOString(), NOW.toISOString());
+    old.pragma("user_version = 3");
+    old.close();
+
+    const db = openDb(file);
+    expect(db.pragma("user_version", { simple: true })).toBe(4);
+    const [draft] = listDraftsByStatus(db, "published");
+    expect(draft?.body).toEqual(sampleBody);
+    expect(draft?.reviewSources).toBeUndefined();
+    db.close();
   });
 
   it("[REQ-004] 승인 대기 수는 drafting + awaiting_approval만 센다(발행·폐기된 것은 제외)", () => {
@@ -195,8 +235,10 @@ describe("draft transitions (CAS)", () => {
   const body = (title: string, experienceLine: string | null = null): DraftBody => ({
     category: "book",
     title,
-    intro: "i",
-    items: [{ productExternalId: "1", oneLiner: "o", reason: "r" }],
+    synopsis: "s",
+    mood: "m",
+    recommendedFor: "r",
+    highlights: "h",
     experienceLine,
   });
   const seed = (db: ReturnType<typeof openDb>) =>

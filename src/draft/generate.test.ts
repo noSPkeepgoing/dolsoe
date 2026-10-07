@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ApplianceBody, DraftBody, Product } from "@contract/domain.js";
+import type { ApplianceBody, BookBody, DraftBody, Product } from "@contract/domain.js";
 import { REGENERATE_MAX_RETRIES } from "@contract/domain.js";
 
 import { GenerationError, generateDraftBody, type BodyGenerator } from "./generate.js";
@@ -70,8 +70,10 @@ describe("generateDraftBody", () => {
     const generator = generatorReturning({
       category: "book",
       title: "t",
-      intro: "i",
-      items: [{ productExternalId: "1", oneLiner: "o", reason: "r" }],
+      synopsis: "s",
+      mood: "m",
+      recommendedFor: "r",
+      highlights: "h",
       experienceLine: null,
     });
     await expect(
@@ -84,6 +86,71 @@ describe("generateDraftBody", () => {
     const result = await generateDraftBody({ generator, category: "appliance", products: PRODUCTS, memo: null });
     expect(result.body.experienceLine).toBeNull();
     expect(result.quality.hasExperienceLine).toBe(false);
+  });
+});
+
+describe("generateDraftBody — 책 한 권 리뷰(REQ-016)", () => {
+  const INTRO = "무라카미 하루키가 삼 년 만에 내놓은 장편으로 좋은 이야기란 무엇인가라는 질문에 답을 담았다";
+  const bookProduct: Product = {
+    ...product("1"),
+    source: "yes24",
+    category: "book",
+    affiliate: "yes24",
+    title: "가호",
+    bookDetail: { introduction: INTRO, tableOfContents: null },
+  };
+  const bookBody = (over: Partial<BookBody> = {}): BookBody => ({
+    category: "book",
+    title: "하루키의 새 장편",
+    synopsis: "한 남자가 오래된 기억을 따라가는 이야기예요.",
+    mood: "잔잔하고 쓸쓸해요.",
+    recommendedFor: "천천히 읽는 소설을 좋아하는 분께요.",
+    highlights: "후기마다 마지막 장면의 여운을 이야기해요.",
+    experienceLine: null,
+    ...over,
+  });
+  const run = (generator: BodyGenerator, reviewNotes?: string) =>
+    generateDraftBody({ generator, category: "book", products: [bookProduct], memo: null, ...(reviewNotes === undefined ? {} : { reviewNotes }) });
+
+  it("[REQ-016] 후기 노트를 생성기에 넘긴다", async () => {
+    const generator = generatorReturning(bookBody());
+    await run(generator, "- 분위기: 잔잔하다는 평");
+    expect(generator.generateBody.mock.calls[0]?.[0]).toMatchObject({ reviewNotes: "- 분위기: 잔잔하다는 평" });
+  });
+
+  it("[REQ-016] 직접 인용·소개문 복사는 문제를 알려주며 1회 재생성하고, 고쳐지면 그 결과를 쓴다", async () => {
+    const quoted = bookBody({ highlights: '한 독자는 "마지막 장면이 오래 남는다"고 했어요.' });
+    const copied = bookBody({ synopsis: "삼 년 만에 내놓은 장편으로 좋은 이야기란 무엇인가라는 질문에 답해요" });
+    for (const bad of [quoted, copied]) {
+      const generator = generatorReturning(bad, bookBody());
+      const result = await run(generator);
+      expect(generator.generateBody).toHaveBeenCalledTimes(1 + REGENERATE_MAX_RETRIES);
+      expect(generator.generateBody.mock.calls[1]?.[0].problems.join(" ")).toMatch(/인용|소개문/);
+      expect(result.body).toEqual(bookBody());
+    }
+  });
+
+  it("[REQ-016] 후기 원문 조각을 그대로 옮기면 문제를 알려주며 재생성한다(원문 조각은 생성기에 보내지 않는다)", async () => {
+    const excerpt = "깨달음은 가르칠 수 없고 직접 체험으로만 알 수 있다";
+    const copied = bookBody({ highlights: `독자들은 ${excerpt}고 해요.` });
+    const generator = generatorReturning(copied, bookBody());
+    const result = await generateDraftBody({ generator, category: "book", products: [bookProduct], memo: null, reviewNotes: "- 메모", reviewExcerpts: [excerpt] });
+    expect(generator.generateBody).toHaveBeenCalledTimes(1 + REGENERATE_MAX_RETRIES);
+    expect(generator.generateBody.mock.calls[1]?.[0].problems.join(" ")).toMatch(/후기 원문/);
+    expect(JSON.stringify(generator.generateBody.mock.calls[0]?.[0])).not.toContain(excerpt);
+    expect(result.body).toEqual(bookBody());
+  });
+
+  it("[REQ-016] 재생성 후에도 인용·복사가 남으면 GenerationError(깨진 초안을 승인 요청으로 보내지 않는다)", async () => {
+    const quoted = bookBody({ mood: "“여운이 길다”고들 해요" });
+    await expect(run(generatorReturning(quoted, quoted))).rejects.toBeInstanceOf(GenerationError);
+  });
+
+  it("[REQ-002] 깨끗한 한 권 리뷰는 한 번에 통과한다(본문이 상품 ID를 가리키지 않아도 된다)", async () => {
+    const generator = generatorReturning(bookBody());
+    const result = await run(generator);
+    expect(generator.generateBody).toHaveBeenCalledTimes(1);
+    expect(result.quality).toEqual({ bannedPhrasesFound: [], hasExperienceLine: false });
   });
 });
 

@@ -1,5 +1,5 @@
 import type { DraftBody, Product, QualityReport } from "@contract/domain.js";
-import { BANNED_PHRASES, EXPERIENCE_CLAIM_PATTERNS } from "@contract/domain.js";
+import { BANNED_PHRASES, EXPERIENCE_CLAIM_PATTERNS, VERBATIM_MIN_CHARS } from "@contract/domain.js";
 
 /** 검사 대상은 봇이 만든 문장뿐이다. 사용자가 준 경험 문장(`experienceLine`)과 분류용 `category`는 제외(REQ-011). */
 const EXCLUDED_KEYS = new Set(["experienceLine", "category"]);
@@ -60,17 +60,58 @@ export function validateAgainstProducts(body: DraftBody, products: readonly Prod
     return problems;
   }
 
-  const seen = new Set<string>();
-  for (const item of body.items) {
-    if (!known.has(item.productExternalId)) {
-      problems.push(`책 소개가 존재하지 않는 상품 ID ${item.productExternalId}를 가리킵니다`);
-    } else if (seen.has(item.productExternalId)) {
-      problems.push(`같은 책(${item.productExternalId})을 두 번 소개합니다`);
-    }
-    seen.add(item.productExternalId);
+  // 책은 한 권짜리라 본문이 상품 ID를 가리키지 않는다(B3, ADR-010). 상품 수는 소스·작업이 보장한다.
+  return problems;
+}
+
+const QUOTE_CHARS = /["“”]/;
+const URL_PATTERN = /https?:\/\/|www\./i;
+const withoutSpaces = (text: string): string => text.replace(/\s+/g, "");
+
+/** `source` 안에 `text`와 `minChars` 이상 그대로 이어지는 구간이 있는가(공백 무시). */
+function sharesVerbatimRun(text: string, source: string, minChars: number): boolean {
+  if (text.length < minChars || source.length < minChars) return false;
+  for (let start = 0; start + minChars <= text.length; start++) {
+    if (source.includes(text.slice(start, start + minChars))) return true;
   }
+  return false;
+}
+
+/**
+ * REQ-016: 책 초안이 후기·소개문을 옮겨 적지 않았는지 기계로 확인한다(ADR-010).
+ * 직접 인용(큰따옴표)·URL은 항상 금지, 소개문·목차와 `VERBATIM_MIN_CHARS`자 이상 그대로 겹치면 복사로 본다.
+ * 책 제목·저자처럼 원래 겹치는 고유명은 비교 전에 뺀다. 사용자가 준 경험 문장은 검사 제외(REQ-011).
+ * 후기 원문은 웹검색 인용의 `cited_text` 조각(reviewExcerpts)으로만 대조한다 — 인용되지 않은 후기 문장은 기계로 볼 수 없어 프롬프트 규칙과 사람의 승인이 맡는다.
+ */
+export function findCopyProblems(body: DraftBody, products: readonly Product[], reviewExcerpts: readonly string[] = []): string[] {
+  if (body.category !== "book") return [];
+  const texts: string[] = [];
+  collectBotText(body, texts);
+  const joined = texts.join("\n");
+
+  const problems: string[] = [];
+  if (QUOTE_CHARS.test(joined)) problems.push("큰따옴표 직접 인용이 있습니다. 후기는 인용 없이 의역만 하세요");
+  if (URL_PATTERN.test(joined)) problems.push("본문에 URL이 있습니다. 출처는 본문에 쓰지 않습니다");
+
+  const names = products.flatMap((product) => [product.title, product.specs["저자"] ?? ""]).map(withoutSpaces).filter((name) => name.length > 0);
+  const stripNames = (text: string): string => names.reduce((acc, name) => acc.split(name).join("\u0000"), withoutSpaces(text));
+  const compared = stripNames(joined);
+
   for (const product of products) {
-    if (!seen.has(product.externalId)) problems.push(`상품 ${product.externalId}가 소개에서 빠졌습니다`);
+    const detail = product.bookDetail;
+    if (detail === undefined) continue;
+    const checks: [string, string | null][] = [
+      ["소개문", detail.introduction],
+      ["목차", detail.tableOfContents],
+    ];
+    for (const [label, source] of checks) {
+      if (source !== null && sharesVerbatimRun(compared, stripNames(source), VERBATIM_MIN_CHARS)) {
+        problems.push(`${label}를 ${VERBATIM_MIN_CHARS}자 이상 그대로 옮겼습니다. 줄거리·분위기는 자기 말로 바꿔 쓰세요`);
+      }
+    }
+  }
+  if (reviewExcerpts.some((excerpt) => sharesVerbatimRun(compared, stripNames(excerpt), VERBATIM_MIN_CHARS))) {
+    problems.push(`후기 원문을 ${VERBATIM_MIN_CHARS}자 이상 그대로 옮겼습니다. 후기는 자기 말로 의역하세요`);
   }
   return problems;
 }

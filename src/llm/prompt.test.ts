@@ -18,7 +18,7 @@ const product = (externalId: string, over: Partial<Product> = {}): Product => ({
   ...over,
 });
 
-const base = { category: "book" as const, products: [product("1"), product("2")], memo: null, avoidPhrases: [], problems: [] };
+const base = { category: "book" as const, products: [product("1")], memo: null, avoidPhrases: [], problems: [] };
 
 describe("buildPrompt", () => {
   it("[REQ-002] 모델에게 상품 ID·제목·가격·기준일·스펙을 데이터로 준다", () => {
@@ -45,11 +45,51 @@ describe("buildPrompt", () => {
     expect(system).toMatch(/null/);
   });
 
-  it("[REQ-002] 카테고리별 골격 지침: 가전=비교표(행 수=상품 수), 책=큐레이션(모든 책 한 번씩)", () => {
+  it("[REQ-002] 카테고리별 골격 지침: 가전=비교표(행 수=상품 수), 책=한 권 리뷰(줄거리·분위기·이런 사람에게·인상 깊은 대목)", () => {
     const appliance = buildPrompt({ ...base, category: "appliance", products: [product("1", { category: "appliance" })] });
     expect(appliance.system).toMatch(/비교표/);
     expect(appliance.system).toMatch(/행 수/);
-    expect(buildPrompt(base).system).toMatch(/한 번씩/);
+    const book = buildPrompt(base).system;
+    for (const field of ["synopsis", "mood", "recommendedFor", "highlights"]) expect(book).toContain(field);
+    expect(book).toMatch(/한 권/);
+    expect(book).not.toMatch(/큐레이션|oneLiner/);
+  });
+
+  it("[REQ-002][REQ-011] 책 말투는 대화체지만 지어낸 1인칭 독서 경험은 금지한다", () => {
+    const { system } = buildPrompt(base);
+    expect(system).toMatch(/대화체|구어체/);
+    expect(system).toMatch(/1인칭/);
+  });
+
+  it("[REQ-002] 책 소개문·목차를 데이터로 주고, 그대로 옮기지 말라고 지시한다", () => {
+    const withDetail = product("1", { bookDetail: { introduction: "삼 년 만에 나온 장편 소개문", tableOfContents: "1장 시작 2장 끝" } });
+    const { system, user } = buildPrompt({ ...base, products: [withDetail] });
+    expect(user).toContain("삼 년 만에 나온 장편 소개문");
+    expect(user).toContain("1장 시작 2장 끝");
+    expect(system).toMatch(/그대로 (옮|베끼|복사)/);
+  });
+
+  it("[REQ-002] 소개문이 비어 있으면 줄거리를 기억·상식으로 보태지 말라고 지시한다(실호출에서 모델이 없는 인물을 보탠 사례)", () => {
+    expect(buildPrompt(base).system).toMatch(/소개문이 비어/);
+    expect(buildPrompt(base).system).toMatch(/기억|상식/);
+  });
+
+  it("[REQ-016] 후기 근거가 있으면 의역 근거로 주고 인용·원문·URL 금지를 지시한다", () => {
+    const { system, user } = buildPrompt({ ...base, reviewNotes: "- 분위기: 잔잔하다는 평" });
+    expect(user).toContain("후기 근거");
+    expect(user).toContain("잔잔하다는 평");
+    for (const rule of ["의역", "큰따옴표", "URL"]) expect(system).toContain(rule);
+  });
+
+  it("[REQ-016] 후기 근거가 없으면 그 사실을 알려 인상 깊은 대목을 지어내지 않게 한다", () => {
+    const { user } = buildPrompt(base);
+    expect(user).toMatch(/후기 근거가 없/);
+    expect(user).not.toContain("후기 근거:");
+  });
+
+  it("[REQ-016] 가전 프롬프트에는 후기 근거 섹션이 없다", () => {
+    const { user } = buildPrompt({ ...base, category: "appliance", products: [product("1", { category: "appliance" })], reviewNotes: "x" });
+    expect(user).not.toContain("후기 근거");
   });
 
   it("[REQ-006] 메모가 있을 때만 사용자 메모 섹션이 생긴다", () => {
@@ -65,7 +105,7 @@ describe("buildPrompt", () => {
 });
 
 describe("buildPrompt — 수정(revision)", () => {
-  const previousBody = { category: "book" as const, title: "이전 제목", intro: "이전 소개", items: [], experienceLine: null };
+  const previousBody = { category: "book" as const, title: "이전 제목", synopsis: "이전 줄거리", mood: "m", recommendedFor: "r", highlights: "h", experienceLine: null };
 
   it("[REQ-008] 이전 초안과 수정 지시를 모델에게 준다", () => {
     const { user } = buildPrompt({ ...base, revision: { previousBody, instruction: "소개를 짧게", experienceLine: null } });
@@ -87,7 +127,7 @@ describe("buildPrompt — 수정(revision)", () => {
 
 describe("buildPrompt — 경험 지우기", () => {
   it("[REQ-011] clearExperience면 이전 초안에 경험 문장이 있어도 null 규칙을 쓴다", () => {
-    const previousBody = { category: "book" as const, title: "t", intro: "i", items: [], experienceLine: "이전 경험" };
+    const previousBody = { category: "book" as const, title: "t", synopsis: "s", mood: "m", recommendedFor: "r", highlights: "h", experienceLine: "이전 경험" };
     const { system } = buildPrompt({ ...base, revision: { previousBody, instruction: "x", experienceLine: null, clearExperience: true } });
     expect(system).toMatch(/experienceLine 필드는 항상 null/);
     expect(system).not.toContain("이전 경험");

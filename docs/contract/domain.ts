@@ -16,16 +16,29 @@ export const REGENERATE_MAX_RETRIES = 1; // REQ-011·015 자동 재생성 횟수
 export const PUBLISH_MAX_RETRIES = 1; // REQ-013 명확한 실패에 한한 재시도
 export const MONTHLY_LLM_BUDGET_KRW = 10_000; // NFR-001, ADR-007
 export const LLM_MODEL_BODY = "claude-sonnet-5-5"; // ADR-007 본문 생성 모델(2026-10 확인)
+export const LLM_MODEL_REVIEW = "claude-sonnet-5-5"; // ADR-010 후기 수집(웹검색) 모델. 한국어 의역 품질을 보고 바꿀 수 있게 분리
 /** 단가(USD / 1M 토큰, 2026-09-25 공식 표). 바뀌면 여기만 고친다. */
 export const LLM_PRICING_USD_PER_MTOK = {
   "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2 },
   "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1 },
 } as const;
+/** 웹검색 서버 도구 단가(검색 1회, USD). $10 / 1,000건 — 토큰 비용과 별도로 청구된다(ADR-007·010). */
+export const WEB_SEARCH_USD_PER_REQUEST = 0.01;
 export const USD_TO_KRW = 1500; // 비용 상한용 보수적 고정 환율(추정치)
 export const TELEGRAM_MAX_MESSAGE_CHARS = 4096; // 텔레그램 메시지 한 통의 글자 상한 — 넘는 본문은 쪼개 보낸다
 export const CARD_PREVIEW_MAX_CHARS = 2500; // REQ-007 초안 카드 본문 미리보기 상한(품질·버튼 줄을 위한 여유 포함)
 /** REQ-006 링크 모드에서 수익 링크로 인정하는 쿠팡 파트너스 단축 링크 호스트(ADR-008: 페이지는 긁지 않는다). */
 export const COUPANG_PARTNER_HOSTS = ["link.coupang.com", "coupa.ng"] as const;
+/** REQ-001 책 후보 범위(ADR-010 결정 2026-10-07): YES24 소설/시/희곡·에세이 베스트셀러만. 시험서·문제집은 리뷰형에 맞지 않아 제외. */
+export const BOOK_CANDIDATE_CATEGORY_IDS = ["001001046", "001001047"] as const;
+/** REQ-016 후기 수집 시 검색 최대 횟수(비용 상한). */
+export const REVIEW_SEARCH_MAX_USES = 3;
+/** REQ-016 초안에 보관하는 후기 출처 URL 수 상한. */
+export const REVIEW_SOURCES_MAX = 10;
+/** REQ-002 모델에 보내는 소개문·목차 각각의 글자 수 상한(토큰 절약, 목차는 수천 자까지 온다). */
+export const BOOK_DETAIL_MAX_CHARS = 1500;
+/** REQ-016 소개문·목차·후기 근거와 이 글자 수 이상 그대로 이어지면 원문 복사로 본다(ADR-010, 공백 무시). */
+export const VERBATIM_MIN_CHARS = 20;
 export const YES24_HOST_SUFFIX = "yes24.com"; // REQ-006 YES24 상품 링크 판별(서브도메인 포함)
 
 /** REQ-010 대가성 문구. 렌더러가 삽입하며 LLM 출력에 의존하지 않는다. */
@@ -65,8 +78,8 @@ export const EXPERIENCE_CLAIM_PATTERNS: readonly RegExp[] = [
 export const CategorySchema = z.enum(["appliance", "book"]); // 생활가전·주방 / 책 추천
 export type Category = z.infer<typeof CategorySchema>;
 export const CATEGORY_ROTATION: readonly Category[] = ["appliance", "book"]; // REQ-001 번갈아
-/** REQ-002 초안 1편에 쓰는 상품 수(G1 비교표 3종 / B2 큐레이션 5권). */
-export const PRODUCTS_PER_DRAFT: Record<Category, number> = { appliance: 3, book: 5 };
+/** REQ-002 초안 1편에 쓰는 상품 수(G1 비교표 3종 / B3 한 권 리뷰 1권, ADR-010). */
+export const PRODUCTS_PER_DRAFT: Record<Category, number> = { appliance: 3, book: 1 };
 
 export const AffiliateProgramSchema = z.enum(["coupang", "yes24"]);
 export type AffiliateProgram = z.infer<typeof AffiliateProgramSchema>;
@@ -75,6 +88,13 @@ export const ProductSourceKindSchema = z.enum(["yes24", "coupang_link"]); // ADR
 export type ProductSourceKind = z.infer<typeof ProductSourceKindSchema>;
 
 // ── 상품 (REQ-002, REQ-003, REQ-006) ───────────────────────────────
+/** REQ-002 책 소개문·목차(YES24 contentDetail, HTML 제거·길이 제한 후). 책이 아니거나 없으면 생략. */
+export const BookDetailSchema = z.object({
+  introduction: z.string().nullable(),
+  tableOfContents: z.string().nullable(),
+});
+export type BookDetail = z.infer<typeof BookDetailSchema>;
+
 export const ProductSchema = z.object({
   externalId: z.string().min(1), // 소스 내 고유 ID(YES24 상품번호, 쿠팡 상품 ID 등) — 중복 제외 키
   source: ProductSourceKindSchema,
@@ -85,6 +105,7 @@ export const ProductSchema = z.object({
   priceKrw: z.number().int().nonnegative().nullable(),
   priceAsOf: z.string().datetime().nullable(), // REQ-011 가격 기준일
   specs: z.record(z.string(), z.string()), // 비교표 재료(면적·필터비용·저자·출판사 등)
+  bookDetail: BookDetailSchema.optional(), // 책 한 권 리뷰의 재료(소개문·목차). 옛 저장 행에는 없다
 });
 export type Product = z.infer<typeof ProductSchema>;
 
@@ -111,19 +132,14 @@ export const ApplianceBodySchema = z.object({
 });
 export type ApplianceBody = z.infer<typeof ApplianceBodySchema>;
 
+/** REQ-002 B3 한 권 리뷰: 제목 → 줄거리 → 분위기·읽는 느낌 → 이런 사람에게 → 인상 깊은 대목 → (렌더러가 구매 링크) → 내 경험 한 줄. */
 export const BookBodySchema = z.object({
   category: z.literal("book"),
-  title: z.string().min(1), // B2: "퇴근 후 읽기 좋은 에세이 5권"
-  intro: z.string().min(1),
-  items: z
-    .array(
-      z.object({
-        productExternalId: z.string().min(1),
-        oneLiner: z.string().min(1),
-        reason: z.string().min(1),
-      }),
-    )
-    .min(1),
+  title: z.string().min(1), // B3: 책 제목이 드러나는 제목
+  synopsis: z.string().min(1), // 줄거리(소개문 근거, 원문 복사 금지)
+  mood: z.string().min(1), // 분위기·읽는 느낌(후기 근거 의역)
+  recommendedFor: z.string().min(1), // 이런 사람에게
+  highlights: z.string().min(1), // 인상 깊은 대목(후기·소개문에서 확인된 것만 의역, 직접 인용 금지)
   experienceLine: z.string().nullable(),
 });
 export type BookBody = z.infer<typeof BookBodySchema>;
@@ -173,6 +189,8 @@ export const DraftSchema = z.object({
   body: DraftBodySchema.nullable(), // drafting 중 null
   memo: z.string().nullable(), // 링크 모드 메모(REQ-006)
   quality: QualityReportSchema.nullable(),
+  /** REQ-016 후기 근거 출처 URL(발행 본문에는 넣지 않는다). 책 초안만 의미 있고, 없으면 생략. */
+  reviewSources: z.array(z.string().url()).optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

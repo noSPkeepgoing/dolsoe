@@ -18,7 +18,7 @@ const product = (id: string): Product => ({
   priceAsOf: NOW.toISOString(),
   specs: {},
 });
-const body: DraftBody = { category: "book", title: "t", intro: "i", items: [{ productExternalId: "1", oneLiner: "o", reason: "r" }], experienceLine: null };
+const body: DraftBody = { category: "book", title: "t", synopsis: "s", mood: "m", recommendedFor: "r", highlights: "h", experienceLine: null };
 
 describe("createDraftStore", () => {
   it("[REQ-001][REQ-003][REQ-004] 초안 저장은 초안·다룬 상품·마지막 카테고리를 함께 기록한다", () => {

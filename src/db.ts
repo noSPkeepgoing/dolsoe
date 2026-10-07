@@ -80,6 +80,8 @@ const MIGRATIONS: readonly string[] = [
      result_json TEXT
    );
    CREATE INDEX idx_publish_attempts_draft ON publish_attempts (draft_id)`,
+  // v4 — 1.6 책 후기 근거 출처 URL(REQ-016, ADR-010). 발행 본문에는 넣지 않고 여기에만 보관한다. 옛 초안은 NULL
+  `ALTER TABLE drafts ADD COLUMN review_sources_json TEXT`,
 ];
 
 function migrate(db: Database.Database): void {
@@ -119,6 +121,8 @@ export interface NewDraft {
   body: DraftBody | null;
   memo: string | null;
   quality: QualityReport | null;
+  /** REQ-016 후기 근거 출처 URL. 책 초안만, 없으면 생략 */
+  reviewSources?: string[];
 }
 
 interface DraftRow {
@@ -130,6 +134,7 @@ interface DraftRow {
   body_json: string | null;
   memo: string | null;
   quality_json: string | null;
+  review_sources_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -147,6 +152,7 @@ function rowToDraft(row: DraftRow): Draft {
     body: parseJson(row.body_json),
     memo: row.memo,
     quality: parseJson(row.quality_json),
+    reviewSources: row.review_sources_json === null ? undefined : parseJson(row.review_sources_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -156,8 +162,8 @@ export function insertDraft(db: Database.Database, draft: NewDraft, now: Date): 
   const stamp = now.toISOString();
   const result = db
     .prepare(
-      `INSERT INTO drafts (category, mode, status, products_json, body_json, memo, quality_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO drafts (category, mode, status, products_json, body_json, memo, quality_json, review_sources_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       draft.category,
@@ -167,6 +173,7 @@ export function insertDraft(db: Database.Database, draft: NewDraft, now: Date): 
       draft.body === null ? null : JSON.stringify(draft.body),
       draft.memo,
       draft.quality === null ? null : JSON.stringify(draft.quality),
+      draft.reviewSources === undefined ? null : JSON.stringify(draft.reviewSources),
       stamp,
       stamp,
     );

@@ -26,10 +26,14 @@ const APPLIANCE_RULES = `
 - recommendations: "이런 분께 이 제품" 형태. forWhom(누구에게), productExternalId, reason(데이터에 근거한 이유).`;
 
 const BOOK_RULES = `
-[글 종류: 책 큐레이션형]
-- title: 주제와 권수가 드러나는 제목(예: "이번 주 베스트셀러 5권").
-- intro: 어떤 기준으로 고른 목록인지 한두 문장.
-- items: 제공된 책을 한 번씩, 모두 소개합니다. 같은 책을 두 번 쓰거나 빠뜨리지 않습니다. 책마다 oneLiner(한 줄 소개)와 reason(추천 이유)을 쓰고, 줄거리를 길게 옮겨 적지 않습니다.`;
+[글 종류: 책 한 권 리뷰형 — ADR-010]
+이 글은 제공된 책 한 권만 다룹니다. 말투는 사람이 쓴 것처럼 대화체·구어체("~예요", "~해요")로 부드럽게 씁니다. 다만 작성자가 책을 읽었다는 1인칭 경험·감상은 지어내지 않습니다(개인 감상은 사람이 따로 넣습니다). "읽어보니", "읽어보면", "직접" 처럼 읽은 경험처럼 들리는 표현도 쓰지 않습니다. 독자 반응은 후기 근거가 있을 때만 "독자들은 ~라고 해요"처럼 3인칭으로 전합니다.
+- title: 책 제목이 드러나는 제목.
+- synopsis(줄거리): 소개문을 근거로 책 내용을 자기 말로 풀어 씁니다. 소개문·목차 문장을 그대로 옮기거나 베끼지 않습니다(20자 이상 같은 문장이 이어지면 안 됩니다). 결말·반전은 밝히지 않습니다. 소개문이 비어 있으면 줄거리는 목차와 후기 근거에서 확인되는 만큼만 짧게 쓰고, 책에 대한 기억·상식으로 줄거리나 인물·사건을 보태지 않습니다.
+- mood(분위기·읽는 느낌): 후기 근거와 소개문에서 확인된 분위기만 씁니다.
+- recommendedFor(이런 사람에게): 어떤 독자에게 맞을지 한두 문장.
+- highlights(인상 깊은 대목): 후기 근거나 소개문·목차에서 확인된 대목만 의역해서 씁니다. 확인된 것이 없으면 목차에서 드러나는 구성을 자기 말로 소개하고, 그럴듯한 장면·대사를 지어내지 않습니다.
+후기 규칙: 후기는 의역만 합니다. 큰따옴표 인용, 후기 원문 문장, 후기 작성자의 1인칭 경험, URL, 출처 이름을 쓰지 않습니다.`;
 
 export function buildPrompt(input: GenerateBodyInput): { system: string; user: string } {
   // 수정이면 이번 지시의 경험 문장, 없으면 이전 초안에 있던 문장을 유지한다(generate.ts와 같은 규칙).
@@ -44,9 +48,17 @@ export function buildPrompt(input: GenerateBodyInput): { system: string; user: s
     priceKrw: product.priceKrw,
     priceAsOf: product.priceAsOf,
     specs: product.specs,
+    ...(product.bookDetail === undefined ? {} : { bookDetail: product.bookDetail }),
   }));
 
   const sections = [`상품 데이터(${input.products.length}개):\n${JSON.stringify(products, null, 2)}`];
+  if (input.category === "book") {
+    sections.push(
+      input.reviewNotes !== undefined && input.reviewNotes.trim().length > 0
+        ? `후기 근거(독자 후기를 의역해 정리한 노트입니다. 이 안의 표현을 그대로 옮기지 마세요):\n${input.reviewNotes}`
+        : "후기 근거가 없습니다. 소개문·목차에서 확인되는 내용만 쓰고, 독자 반응이나 인상 깊은 장면을 지어내지 마세요.",
+    );
+  }
   if (revision !== undefined) {
     sections.push(`이전 초안(이 내용을 바탕으로 고칩니다):\n${JSON.stringify(revision.previousBody, null, 2)}`);
     sections.push(`수정 지시(사람이 쓴 그대로):\n${revision.instruction}`);

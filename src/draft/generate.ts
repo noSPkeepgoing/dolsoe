@@ -1,7 +1,7 @@
 import type { Category, DraftBody, Product, QualityReport } from "@contract/domain.js";
 import { REGENERATE_MAX_RETRIES } from "@contract/domain.js";
 
-import { checkQuality, findExperienceClaims, validateAgainstProducts } from "./quality-check.js";
+import { checkQuality, findCopyProblems, findExperienceClaims, validateAgainstProducts } from "./quality-check.js";
 
 export class GenerationError extends Error {}
 
@@ -29,6 +29,8 @@ export interface GenerateBodyInput {
   /** 직전 시도의 골격 문제(없는 상품 ID, 표 불일치 등) — 고칠 것 */
   problems: string[];
   revision?: Revision;
+  /** REQ-016 책 후기 근거(의역 노트). 없거나 비면 "후기 근거 없음" */
+  reviewNotes?: string;
 }
 
 /** LLM 호출 경계. 실제 구현은 src/llm.ts, 테스트는 가짜로 대체한다. */
@@ -37,8 +39,8 @@ export interface BodyGenerator {
 }
 
 /**
- * 생성 → 골격 검증 → 품질 검사 루프(REQ-002·015).
- * - 골격 문제는 재시도 후에도 남으면 실패(GenerationError). 깨진 초안을 승인 요청으로 보내지 않는다.
+ * 생성 → 골격 검증 → 품질 검사 루프(REQ-002·015·016).
+ * - 골격 문제와 직접 인용·URL·소개문 복사(REQ-016)는 재시도 후에도 남으면 실패(GenerationError). 깨진 초안을 승인 요청으로 보내지 않는다.
  * - 금지 표현은 재시도 후에도 남으면 차단하지 않고 결과에 담아 보낸다(판단은 사람, REQ-015).
  * - 경험 한 줄은 사용자가 준 문장만 쓴다(REQ-011): 처음 생성은 항상 비우고, 수정이면 이번 지시의 문장(없으면 이전 초안의 문장)이
  *   원문 그대로 들어 있는지 검사해 어긋나면 1회 재시도 후 GenerationError.
@@ -49,8 +51,11 @@ export async function generateDraftBody(input: {
   products: readonly Product[];
   memo: string | null;
   revision?: Revision;
+  reviewNotes?: string;
+  /** REQ-016 후기 원문 조각 — 본문이 그대로 옮기지 않았는지 대조하는 데만 쓴다(생성기에는 보내지 않는다). */
+  reviewExcerpts?: readonly string[];
 }): Promise<{ body: DraftBody; quality: QualityReport }> {
-  const { revision } = input;
+  const { revision, reviewNotes } = input;
   const expectedExperience = revision === undefined ? null : expectedExperienceLine(revision);
   let avoidPhrases: string[] = [];
   let problems: string[] = [];
@@ -64,6 +69,7 @@ export async function generateDraftBody(input: {
       avoidPhrases,
       problems,
       ...(revision === undefined ? {} : { revision }),
+      ...(reviewNotes === undefined ? {} : { reviewNotes }),
     });
 
     if (raw.category !== input.category) {
@@ -87,7 +93,7 @@ export async function generateDraftBody(input: {
     const body = revision === undefined ? ({ ...raw, experienceLine: null } as DraftBody) : raw;
     // 골격 문제와 지어낸 후기(REQ-011)는 둘 다 재시도 후에도 남으면 차단한다. 금지 표현(REQ-015)만 표시하고 통과시킨다.
     const claims = findExperienceClaims(body).map((claim) => `봇이 지어낸 후기·경험 표현("${claim}")이 있습니다. 데이터에 있는 사실만 쓰세요`);
-    const structural = [...validateAgainstProducts(body, input.products), ...claims];
+    const structural = [...validateAgainstProducts(body, input.products), ...findCopyProblems(body, input.products, input.reviewExcerpts), ...claims];
     const quality = checkQuality(body);
 
     if (structural.length > 0) {

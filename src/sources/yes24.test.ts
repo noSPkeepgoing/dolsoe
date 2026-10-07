@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { BOOK_CANDIDATE_CATEGORY_IDS, BOOK_DETAIL_MAX_CHARS } from "@contract/domain.js";
+
 import { Yes24ApiError, Yes24LinkError, Yes24Source, parseYes24Items } from "./yes24.js";
 
 const NOW = new Date("2026-10-01T00:00:00.000Z");
@@ -49,6 +51,21 @@ describe("parseYes24Items", () => {
     });
   });
 
+  it("[REQ-002] contentDetail의 소개문·목차를 HTML 태그·여분 공백을 걷어 bookDetail로 담는다", () => {
+    const detail = { bookIntroduction: "<b>“좋은 이야기”</b> 란\n  무엇인가", bookSummary: null, tableOfContents: "1장 <b>· </b>시작   2장 끝" };
+    const [product] = parseYes24Items(envelope([item({ contentDetail: detail })]), NOW);
+    expect(product?.bookDetail).toEqual({ introduction: "“좋은 이야기” 란 무엇인가", tableOfContents: "1장 · 시작 2장 끝" });
+  });
+
+  it("[REQ-002] 소개문·목차가 길면 BOOK_DETAIL_MAX_CHARS로 자르고, 둘 다 비면 bookDetail을 두지 않는다", () => {
+    const long = "가".repeat(BOOK_DETAIL_MAX_CHARS + 500);
+    const [cut] = parseYes24Items(envelope([item({ contentDetail: { bookIntroduction: long, bookSummary: null, tableOfContents: null } })]), NOW);
+    expect(cut?.bookDetail?.introduction?.length).toBeLessThanOrEqual(BOOK_DETAIL_MAX_CHARS);
+    expect(cut?.bookDetail?.tableOfContents).toBeNull();
+    const [none] = parseYes24Items(envelope([item({ contentDetail: { bookIntroduction: " ", bookSummary: null, tableOfContents: null } })]), NOW);
+    expect(none?.bookDetail).toBeUndefined();
+  });
+
   it("[REQ-005] 성인물·판매중이 아닌 상품·수익 링크가 없는 상품은 후보에서 뺀다", () => {
     const items = [
       item({ itemId: 1 }),
@@ -81,21 +98,35 @@ describe("Yes24Source", () => {
     expect(make(vi.fn() as unknown as typeof fetch).categories).toEqual(["book"]);
   });
 
-  it("[ADR-009] 종합 베스트셀러를 X-Api-Key 헤더로 요청하고 상품 목록을 돌려준다", async () => {
+  it("[REQ-001] 책 후보는 소설·에세이 카테고리별 베스트셀러를 X-Api-Key 헤더로 각각 요청한다(categoryId 필수 — 실서버 PARAM_001)", async () => {
     const fetchFn = vi.fn(async () => jsonResponse(200, envelope([item()])));
-    const products = await make(fetchFn as unknown as typeof fetch).fetchCandidates("book");
-    expect(products).toHaveLength(1);
-    const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toMatch(/^https:\/\/apis\.yes24\.com\/v1\/category\/bestseller\?/);
-    expect(new URL(url).searchParams.get("categoryId")).toBe("001"); // 실서버는 categoryId 없으면 400 PARAM_001
-    expect(new Headers(init.headers).get("X-Api-Key")).toBe("yk_test");
+    await make(fetchFn as unknown as typeof fetch).fetchCandidates("book");
+    const calls = fetchFn.mock.calls as unknown as [string, RequestInit][];
+    const ids = calls.map(([url]) => new URL(url).searchParams.get("categoryId"));
+    expect(ids).toEqual([...BOOK_CANDIDATE_CATEGORY_IDS]);
+    for (const [url, init] of calls) {
+      expect(url).toMatch(/^https:\/\/apis\.yes24\.com\/v1\/category\/bestseller\?/);
+      expect(new Headers(init.headers).get("X-Api-Key")).toBe("yk_test");
+    }
   });
 
-  it("[REQ-005] 결과 없음(404 BEST_001)은 오류가 아니라 빈 목록이다", async () => {
-    const fetchFn = vi.fn(async () =>
-      jsonResponse(404, { success: false, errorCode: "BEST_001", message: "베스트셀러 결과가 없습니다.", data: null }),
+  it("[REQ-001] 두 카테고리 결과를 순위대로 번갈아 섞고 같은 책은 한 번만 준다", async () => {
+    const byCategory: Record<string, unknown[]> = {
+      [BOOK_CANDIDATE_CATEGORY_IDS[0]]: [item({ itemId: 1 }), item({ itemId: 2 }), item({ itemId: 9 })],
+      [BOOK_CANDIDATE_CATEGORY_IDS[1]]: [item({ itemId: 10 }), item({ itemId: 9 }), item({ itemId: 11 })],
+    };
+    const fetchFn = vi.fn(async (url: string) => jsonResponse(200, envelope(byCategory[new URL(url).searchParams.get("categoryId") ?? ""] ?? [])));
+    const products = await make(fetchFn as unknown as typeof fetch).fetchCandidates("book");
+    expect(products.map((p) => p.externalId)).toEqual(["1", "10", "2", "9", "11"]);
+  });
+
+  it("[REQ-005] 한 카테고리만 결과 없음(404 BEST_001)이면 다른 카테고리 결과로 계속하고, 모두 없으면 빈 목록", async () => {
+    const empty = () => jsonResponse(404, { success: false, errorCode: "BEST_001", message: "베스트셀러 결과가 없습니다.", data: null });
+    const partial = vi.fn(async (url: string) =>
+      new URL(url).searchParams.get("categoryId") === BOOK_CANDIDATE_CATEGORY_IDS[0] ? empty() : jsonResponse(200, envelope([item({ itemId: 5 })])),
     );
-    expect(await make(fetchFn as unknown as typeof fetch).fetchCandidates("book")).toEqual([]);
+    expect((await make(partial as unknown as typeof fetch).fetchCandidates("book")).map((p) => p.externalId)).toEqual(["5"]);
+    expect(await make(vi.fn(async () => empty()) as unknown as typeof fetch).fetchCandidates("book")).toEqual([]);
   });
 
   it("[REQ-005] 인증 오류·호출 한도 초과는 오류 코드를 담아 실패한다(조용히 빈 목록으로 숨기지 않음)", async () => {
@@ -124,6 +155,13 @@ describe("Yes24Source.fetchItem (링크 모드)", () => {
     const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://apis.yes24.com/v1/goods/itemDetail?searchType=ItemId&query=900000001");
     expect(new Headers(init.headers).get("X-Api-Key")).toBe("yk_test");
+  });
+
+  it("[REQ-002] 링크 모드 상세 조회도 소개문·목차를 bookDetail로 담는다", async () => {
+    const detail = { bookIntroduction: "소개문이에요", bookSummary: null, tableOfContents: "1장 시작" };
+    const fetchFn = vi.fn(async () => jsonResponse(200, envelope([item({ contentDetail: detail })])));
+    const product = await make(fetchFn as unknown as typeof fetch).fetchItem("900000001");
+    expect(product.bookDetail).toEqual({ introduction: "소개문이에요", tableOfContents: "1장 시작" });
   });
 
   it("[REQ-006] 상품이 없거나(GOODS_001) 수익 링크가 없어 걸러지면 이유를 담아 Yes24LinkError", async () => {

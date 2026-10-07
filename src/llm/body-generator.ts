@@ -19,6 +19,8 @@ export interface LlmUsageReport {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
+  /** 웹검색 서버 도구 호출 횟수(REQ-016). 토큰과 별도 단가로 청구된다. 본문 생성에는 없다. */
+  webSearchRequests?: number;
 }
 
 /**

@@ -32,6 +32,13 @@ function productsLine(draft: Draft): string {
   return `상품: ${sources}${priceDate}`;
 }
 
+/** REQ-016: 책 초안이 후기 몇 건을 근거로 썼는지(출처 URL은 카드에 넣지 않는다 — DB에만). 가전에는 줄이 없다. */
+function reviewLine(draft: Draft): string | null {
+  if (draft.category !== "book") return null;
+  const count = draft.reviewSources?.length ?? 0;
+  return count > 0 ? `후기 ${count}건 참고` : "후기 근거 없음";
+}
+
 /** REQ-007·015: 승인 카드. 본문 미리보기 + 품질 한 줄 + `발행 / 수정 / 폐기` 버튼. 텔레그램 평문(마크업 없음)이라 이스케이프가 필요 없다. */
 export function formatCard(draft: Draft): { text: string; buttons: CardButton[] } {
   const quality = draft.quality;
@@ -39,6 +46,7 @@ export function formatCard(draft: Draft): { text: string; buttons: CardButton[] 
     quality === null
       ? "품질: 검사 전"
       : `품질: 금지 표현 ${quality.bannedPhrasesFound.length}개 · 경험 한 줄 ${quality.hasExperienceLine ? "있음" : "없음"}`;
+  const review = reviewLine(draft);
   const text = [
     `📝 초안 #${draft.id} · ${CATEGORY_LABEL[draft.category]} · ${MODE_LABEL[draft.mode]}`,
     DIVIDER,
@@ -46,6 +54,7 @@ export function formatCard(draft: Draft): { text: string; buttons: CardButton[] 
     DIVIDER,
     qualityLine,
     productsLine(draft),
+    ...(review === null ? [] : [review]),
   ].join("\n");
 
   const buttons: CardButton[] = [

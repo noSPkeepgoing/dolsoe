@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MONTHLY_LLM_BUDGET_KRW, USD_TO_KRW } from "@contract/domain.js";
+import { MONTHLY_LLM_BUDGET_KRW, USD_TO_KRW, WEB_SEARCH_USD_PER_REQUEST } from "@contract/domain.js";
 
 import { estimateCostKrw, isBudgetExceeded } from "./cost.js";
 
@@ -15,6 +15,13 @@ describe("estimateCostKrw", () => {
     expect(
       estimateCostKrw("claude-sonnet-5-5", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 1_000_000 }),
     ).toBeCloseTo(0.2 * USD_TO_KRW);
+  });
+
+  it("[NFR-001][REQ-016] 웹검색은 토큰과 별도로 검색 1회당 단가로 더한다", () => {
+    expect(estimateCostKrw("claude-sonnet-5-5", { inputTokens: 0, outputTokens: 0, webSearchRequests: 3 })).toBeCloseTo(
+      3 * WEB_SEARCH_USD_PER_REQUEST * USD_TO_KRW,
+    );
+    expect(estimateCostKrw("claude-sonnet-5-5", { inputTokens: 1_000_000, outputTokens: 0, webSearchRequests: 0 })).toBe(2 * USD_TO_KRW);
   });
 
   it("[NFR-001] 모르는 모델이면 비용을 지어내지 않고 오류", () => {

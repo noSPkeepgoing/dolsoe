@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ApplianceBody, BookBody, Product } from "@contract/domain.js";
 
-import { checkQuality, findExperienceClaims, validateAgainstProducts } from "./quality-check.js";
+import { checkQuality, findCopyProblems, findExperienceClaims, validateAgainstProducts } from "./quality-check.js";
 
 const product = (externalId: string): Product => ({
   externalId,
@@ -34,12 +34,11 @@ const appliance = (over: Partial<ApplianceBody> = {}): ApplianceBody => ({
 
 const book = (over: Partial<BookBody> = {}): BookBody => ({
   category: "book",
-  title: "이번 주 베스트셀러 2권",
-  intro: "이번 주 많이 읽힌 책입니다.",
-  items: [
-    { productExternalId: "1", oneLiner: "한 줄", reason: "이유" },
-    { productExternalId: "2", oneLiner: "한 줄", reason: "이유" },
-  ],
+  title: "하루키의 새 장편",
+  synopsis: "한 남자가 오래된 기억을 따라가는 이야기예요.",
+  mood: "잔잔하고 쓸쓸한 분위기라 조용한 밤에 어울려요.",
+  recommendedFor: "천천히 읽는 소설을 좋아하는 분께 맞아요.",
+  highlights: "후기마다 마지막 장면의 여운을 이야기해요.",
   experienceLine: null,
   ...over,
 });
@@ -55,7 +54,7 @@ describe("checkQuality", () => {
   it("[REQ-015] 표 셀·추천 이유·책 한 줄 소개 같은 중첩 필드도 검사한다", () => {
     const a = checkQuality(appliance({ comparison: { headers: ["a", "b"], rows: [["써봤더니 좋음", "x"]] } }));
     expect(a.bannedPhrasesFound).toContain("써봤더니");
-    const b = checkQuality(book({ items: [{ productExternalId: "1", oneLiner: "직접 써보니", reason: "r" }] }));
+    const b = checkQuality(book({ mood: "직접 써보니" }));
     expect(b.bannedPhrasesFound).toContain("직접 써보니");
   });
 
@@ -79,7 +78,7 @@ describe("checkQuality", () => {
 describe("validateAgainstProducts", () => {
   it("[REQ-002] 골격이 맞으면(표 행 수=상품 수, 추천이 실제 상품을 가리킴) 문제가 없다", () => {
     expect(validateAgainstProducts(appliance(), [product("1"), product("2")])).toEqual([]);
-    expect(validateAgainstProducts(book(), [product("1"), product("2")])).toEqual([]);
+    expect(validateAgainstProducts(book(), [product("1")])).toEqual([]);
   });
 
   it("[REQ-002] 모델이 만든 상품 ID(없는 상품)를 참조하면 문제로 잡는다", () => {
@@ -102,16 +101,64 @@ describe("validateAgainstProducts", () => {
     );
     expect(wrongCols.length).toBeGreaterThan(0);
   });
+});
 
-  it("[REQ-002] 책 소개가 같은 책을 두 번 쓰거나, 소개되지 않은 책이 있으면 문제로 잡는다", () => {
-    const dup = validateAgainstProducts(
-      book({ items: [
-        { productExternalId: "1", oneLiner: "a", reason: "b" },
-        { productExternalId: "1", oneLiner: "a", reason: "b" },
-      ] }),
-      [product("1"), product("2")],
-    );
-    expect(dup.length).toBeGreaterThan(0);
+describe("findCopyProblems", () => {
+  const INTRO = "무라카미 하루키가 삼 년 만에 내놓은 장편으로 좋은 이야기란 무엇인가라는 질문에 답을 담았다";
+  const TOC = "1장 가호와 모터사이클 남자 2장 무사시사카이의 개미핥기 3장 가호와 흰개미 여왕";
+  const withDetail = (title = "가호"): Product => ({
+    ...product("1"),
+    category: "book",
+    source: "yes24",
+    affiliate: "yes24",
+    title,
+    bookDetail: { introduction: INTRO, tableOfContents: TOC },
+  });
+
+  it("[REQ-016] 직접 인용(큰따옴표)이 있으면 문제로 잡는다", () => {
+    const problems = findCopyProblems(book({ highlights: '한 독자는 "마지막 장면이 오래 남는다"고 했어요.' }), [withDetail()]);
+    expect(problems.join(" ")).toMatch(/인용/);
+    expect(findCopyProblems(book({ highlights: "독자는 “여운이 길다”고 했어요." }), [withDetail()])).not.toEqual([]);
+  });
+
+  it("[REQ-016] 출처 URL이 본문에 들어가면 문제로 잡는다(출처는 DB에만)", () => {
+    const problems = findCopyProblems(book({ mood: "자세한 후기는 https://blog.example.com/review 에 있어요" }), [withDetail()]);
+    expect(problems.join(" ")).toMatch(/URL/);
+  });
+
+  it("[REQ-016] 소개문을 20자 이상 그대로 옮기면 문제로 잡는다(공백 차이는 무시)", () => {
+    const copied = "삼 년 만에 내놓은 장편으로  좋은 이야기란 무엇인가라는 질문";
+    const problems = findCopyProblems(book({ synopsis: `이 책은 ${copied}에 답해요.` }), [withDetail()]);
+    expect(problems.join(" ")).toMatch(/소개문/);
+  });
+
+  it("[REQ-016] 목차 문장을 그대로 옮겨도 잡고, 짧게 겹치는 정도는 통과시킨다", () => {
+    expect(findCopyProblems(book({ highlights: "1장 가호와 모터사이클 남자 2장 무사시사카이의 개미핥기 같은 장 제목이 재밌어요" }), [withDetail()]).join(" ")).toMatch(/목차/);
+    expect(findCopyProblems(book({ highlights: "흰개미 여왕 장면이 인상적이에요" }), [withDetail()])).toEqual([]);
+  });
+
+  it("[REQ-016] 책 제목처럼 원래 길게 겹치는 고유명은 복사로 보지 않는다", () => {
+    const longTitle = "무라카미 하루키가 삼 년 만에 내놓은 장편";
+    const problems = findCopyProblems(book({ title: longTitle, synopsis: "제목 그대로의 책이에요" }), [withDetail(longTitle)]);
+    expect(problems).toEqual([]);
+  });
+
+  it("[REQ-016] 후기 원문 조각(인용된 cited_text)을 20자 이상 그대로 옮기면 문제로 잡는다", () => {
+    const excerpt = "깨달음은 가르칠 수 없고 직접 체험으로만 알 수 있다";
+    const copied = book({ highlights: "독자들은 깨달음은 가르칠 수  없고 직접 체험으로만 알 수 있다고 해요." });
+    expect(findCopyProblems(copied, [withDetail()], [excerpt]).join(" ")).toMatch(/후기 원문/);
+    expect(findCopyProblems(copied, [withDetail()])).toEqual([]); // 대조 자료가 없으면 이 검사는 건너뛴다
+    expect(findCopyProblems(book({ highlights: "깨달음은 직접 겪어야 안다는 얘기가 많아요" }), [withDetail()], [excerpt])).toEqual([]);
+  });
+
+  it("[REQ-016] 의역한 깨끗한 초안·소개문 정보가 없는 상품은 문제가 없다", () => {
+    expect(findCopyProblems(book(), [withDetail()])).toEqual([]);
+    expect(findCopyProblems(book(), [product("1")])).toEqual([]);
+  });
+
+  it("[REQ-016][REQ-011] 사용자가 준 경험 문장은 검사에서 제외한다", () => {
+    const experience = `"여운이 길었다" 삼 년 만에 내놓은 장편으로 좋은 이야기란 무엇인가라는 질문`;
+    expect(findCopyProblems(book({ experienceLine: experience }), [withDetail()])).toEqual([]);
   });
 });
 

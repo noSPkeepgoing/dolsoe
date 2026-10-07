@@ -15,6 +15,7 @@ export function recordLlmUsage(db: Database.Database, now: Date, usage: LlmUsage
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       cacheReadTokens: usage.cacheReadTokens,
+      ...(usage.webSearchRequests === undefined ? {} : { webSearchRequests: usage.webSearchRequests }),
     }),
   );
 }

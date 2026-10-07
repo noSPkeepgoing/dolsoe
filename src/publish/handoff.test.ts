@@ -15,7 +15,7 @@ const draft: Draft = {
   products: [
     { externalId: "1", source: "yes24", category: "book", affiliate: "yes24", title: "책", url: "https://www.yes24.com/addon/1", priceKrw: null, priceAsOf: null, specs: {} },
   ],
-  body: { category: "book", title: "제목", intro: "소개", items: [{ productExternalId: "1", oneLiner: "o", reason: "r" }], experienceLine: null },
+  body: { category: "book", title: "제목", synopsis: "s", mood: "m", recommendedFor: "r", highlights: "h", experienceLine: null },
   memo: null,
   quality: null,
   createdAt: "2026-10-01T00:00:00.000Z",

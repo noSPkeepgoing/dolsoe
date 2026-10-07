@@ -3,6 +3,7 @@ import { COUPANG_PARTNER_HOSTS, PRODUCTS_PER_DRAFT } from "@contract/domain.js";
 
 import { deliverCardSafely } from "../draft/deliver.js";
 import { generateDraftBody, type BodyGenerator } from "../draft/generate.js";
+import { gatherReviews, type ReviewCollector } from "../draft/review.js";
 import { isBudgetExceeded } from "../llm/cost.js";
 import { coupangLinkToProduct, parseLinkMessage, type ParsedLink } from "../sources/link-parser.js";
 
@@ -27,6 +28,9 @@ export interface LinkDraftDeps {
   resolveYes24: (itemId: string) => Promise<Product>;
   notify: (text: string) => Promise<void>;
   deliverCard: (draft: Draft) => Promise<void>;
+  /** REQ-016: 책 후기 수집기. 없으면 "후기 근거 없음"으로 만든다. */
+  reviewCollector?: ReviewCollector;
+  onReviewFailure?: (reason: string) => void;
 }
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -63,7 +67,10 @@ export async function runLinkDraft(deps: LinkDraftDeps, text: string): Promise<L
 
   const category: Category = links[0]!.type === "yes24" ? "book" : "appliance";
   const limit = PRODUCTS_PER_DRAFT[category];
-  if (links.length > limit) return skip("too_many", `한 편에는 상품을 ${limit}개까지 쓸 수 있어요. ${links.length}개를 보내주셨어요.`);
+  if (links.length > limit) {
+    const unit = category === "book" ? "책은 한 편에 한 권씩 써요. 한 권씩 따로 보내주세요" : `한 편에는 상품을 ${limit}개까지 쓸 수 있어요`;
+    return skip("too_many", `${unit}. ${links.length}개를 보내주셨어요.`);
+  }
   if (isBudgetExceeded(deps.store.getMonthCostKrw())) {
     return skip("budget", "이번 달 LLM 비용 상한에 닿아 초안을 만들지 않았어요. 상한이 풀리면 다시 보내주세요.");
   }
@@ -77,15 +84,32 @@ export async function runLinkDraft(deps: LinkDraftDeps, text: string): Promise<L
     return skip("source_error", `상품 정보를 가져오지 못했어요: ${messageOf(error)}`);
   }
 
+  const reviews = await gatherReviews(category, products, deps.reviewCollector, deps.onReviewFailure);
   let generated: Awaited<ReturnType<typeof generateDraftBody>>;
   try {
-    generated = await generateDraftBody({ generator: deps.generator, category, products, memo });
+    generated = await generateDraftBody({
+      generator: deps.generator,
+      category,
+      products,
+      memo,
+      ...(reviews.reviewNotes === undefined ? {} : { reviewNotes: reviews.reviewNotes }),
+      ...(reviews.reviewExcerpts === undefined ? {} : { reviewExcerpts: reviews.reviewExcerpts }),
+    });
   } catch (error) {
     return skip("generation_error", `초안 생성에 실패했어요: ${messageOf(error)}`);
   }
 
   const draft = deps.store.saveDraft(
-    { category, mode: "link", status: "awaiting_approval", products, body: generated.body, memo, quality: generated.quality },
+    {
+      category,
+      mode: "link",
+      status: "awaiting_approval",
+      products,
+      body: generated.body,
+      memo,
+      quality: generated.quality,
+      ...(reviews.reviewSources === undefined ? {} : { reviewSources: reviews.reviewSources }),
+    },
     products,
   );
   await deliverCardSafely(deps, draft);

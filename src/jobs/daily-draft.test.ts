@@ -4,6 +4,7 @@ import type { Category, CoveredProduct, Draft, DraftBody, Product } from "@contr
 import { MAX_PENDING_DRAFTS, MONTHLY_LLM_BUDGET_KRW, PRODUCTS_PER_DRAFT } from "@contract/domain.js";
 
 import type { BodyGenerator, GenerateBodyInput } from "../draft/generate.js";
+import type { ReviewCollector } from "../draft/review.js";
 import type { NewDraft } from "../db.js";
 import type { ProductSource } from "../sources/product-source.js";
 
@@ -36,8 +37,10 @@ const bodyFor = (input: GenerateBodyInput, extra = ""): DraftBody =>
     ? {
         category: "book",
         title: "이번 주 베스트셀러",
-        intro: `소개${extra}`,
-        items: input.products.map((p) => ({ productExternalId: p.externalId, oneLiner: "한 줄", reason: "이유" })),
+        synopsis: `줄거리${extra}`,
+        mood: "m",
+        recommendedFor: "r",
+        highlights: "h",
         experienceLine: null,
       }
     : {
@@ -70,13 +73,22 @@ class FakeStore implements DraftStore {
   };
 }
 
-const run = (over: { store?: FakeStore; sources?: ProductSource[]; generator?: BodyGenerator } = {}) => {
+const run = (over: { store?: FakeStore; sources?: ProductSource[]; generator?: BodyGenerator; reviewCollector?: ReviewCollector; onReviewFailure?: (reason: string) => void } = {}) => {
   const store = over.store ?? new FakeStore();
   const notify = vi.fn<(text: string) => Promise<void>>(async () => {});
   const deliverCard = vi.fn<(draft: Draft) => Promise<void>>(async () => {});
   const generator = over.generator ?? generatorOk();
   const sources = over.sources ?? [sourceFor("book", products(BOOKS))];
-  const result = runDailyDraft({ now: () => NOW, sources, generator, store, notify, deliverCard });
+  const result = runDailyDraft({
+    now: () => NOW,
+    sources,
+    generator,
+    store,
+    notify,
+    deliverCard,
+    ...(over.reviewCollector === undefined ? {} : { reviewCollector: over.reviewCollector }),
+    ...(over.onReviewFailure === undefined ? {} : { onReviewFailure: over.onReviewFailure }),
+  });
   return { store, notify, deliverCard, generator, sources, result };
 };
 
@@ -94,6 +106,39 @@ describe("runDailyDraft", () => {
     expect(notify).not.toHaveBeenCalled(); // 텍스트 알림이 아니라 버튼 달린 카드로 보낸다
     expect(deliverCard).toHaveBeenCalledTimes(1);
     expect(deliverCard.mock.calls[0]![0]).toMatchObject({ id: 1, status: "awaiting_approval", body: { title: "이번 주 베스트셀러" } });
+  });
+
+  it("[REQ-002] 책은 한 권만 골라 초안 한 편을 만든다(B3 한 권 리뷰)", async () => {
+    const { store, result } = run({ sources: [sourceFor("book", products(5))] });
+    await result;
+    expect(store.saved[0]!.draft.products.map((p) => p.externalId)).toEqual(["1"]);
+  });
+
+  it("[REQ-016] 책이면 고른 책의 후기를 수집해 노트를 생성기에 넘기고, 출처 URL은 초안 DB용으로만 저장한다", async () => {
+    const reviewCollector: ReviewCollector = { collect: vi.fn(async () => ({ notes: "- 분위기: 잔잔", sources: ["https://blog.example.com/a"] })) };
+    const { store, generator, result } = run({ reviewCollector });
+    await result;
+    expect(reviewCollector.collect).toHaveBeenCalledWith(expect.objectContaining({ externalId: "1" }));
+    expect(vi.mocked(generator.generateBody).mock.calls[0]![0]).toMatchObject({ reviewNotes: "- 분위기: 잔잔" });
+    expect(store.saved[0]!.draft.reviewSources).toEqual(["https://blog.example.com/a"]);
+  });
+
+  it("[REQ-016] 후기 수집이 실패해도 초안은 '후기 근거 없음'으로 계속 만들고, 이유를 남긴다", async () => {
+    const reviewCollector: ReviewCollector = { collect: async () => { throw new Error("검색 서버 오류"); } };
+    const onReviewFailure = vi.fn();
+    const { store, generator, result } = run({ reviewCollector, onReviewFailure });
+    expect((await result).status).toBe("created");
+    expect(onReviewFailure).toHaveBeenCalledWith(expect.stringContaining("검색 서버 오류"));
+    expect(store.saved[0]!.draft.reviewSources).toEqual([]);
+    expect(vi.mocked(generator.generateBody).mock.calls[0]![0].reviewNotes ?? "").toBe("");
+  });
+
+  it("[REQ-016] 가전 초안은 후기를 수집하지 않는다", async () => {
+    const reviewCollector: ReviewCollector = { collect: vi.fn(async () => ({ notes: "x", sources: ["https://a.example.com"] })) };
+    const { store, result } = run({ reviewCollector, sources: [sourceFor("appliance", products(PRODUCTS_PER_DRAFT.appliance, "appliance"))] });
+    await result;
+    expect(reviewCollector.collect).not.toHaveBeenCalled();
+    expect(store.saved[0]!.draft.reviewSources).toBeUndefined();
   });
 
   it("[REQ-001] 가전·책 소스가 모두 있으면 마지막 생성의 반대 카테고리로 번갈아 만든다", async () => {
