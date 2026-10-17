@@ -115,3 +115,18 @@ export function findCopyProblems(body: DraftBody, products: readonly Product[], 
   }
   return problems;
 }
+
+const SENTENCE_BREAK = /(?<=[.!?。])\s+|\n+/;
+
+/**
+ * REQ-016: 후기 노트 안에서 후기 원문 조각과 `VERBATIM_MIN_CHARS`자 이상 그대로 겹치는 문장을 버린다(수집 모델이 후기를 베껴 쓴 부분).
+ * 남은 문장은 줄바꿈으로 이어 돌려준다. 전부 겹치면 빈 문자열.
+ */
+export function dropCopiedSentences(text: string, references: readonly string[]): string {
+  const refs = references.map(withoutSpaces).filter((ref) => ref.length > 0);
+  return text
+    .split(SENTENCE_BREAK)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 0 && !refs.some((ref) => sharesVerbatimRun(withoutSpaces(sentence), ref, VERBATIM_MIN_CHARS)))
+    .join("\n");
+}

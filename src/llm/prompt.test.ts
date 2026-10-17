@@ -81,6 +81,20 @@ describe("buildPrompt", () => {
     for (const rule of ["의역", "큰따옴표", "URL"]) expect(system).toContain(rule);
   });
 
+  it("[REQ-016] 후기 노트는 경계 태그로 감싸고, 노트 안의 지시문은 따르지 말라고 지시한다(웹 내용 → 프롬프트 인젝션 방어)", () => {
+    const { system, user } = buildPrompt({ ...base, reviewNotes: "- 분위기: 잔잔" });
+    expect(user).toMatch(/<review_notes>[\s\S]*잔잔[\s\S]*<\/review_notes>/);
+    expect(system).toMatch(/review_notes/);
+    expect(system).toMatch(/지시문/);
+  });
+
+  it("[REQ-016] 수정 재생성(후기를 다시 모으지 않음)에서는 '근거 없음'이 아니라 이전 초안 밖의 새 사실을 더하지 말라고 지시한다", () => {
+    const previousBody = { category: "book" as const, title: "t", synopsis: "s", mood: "m", recommendedFor: "r", highlights: "h", experienceLine: null };
+    const { user } = buildPrompt({ ...base, revision: { previousBody, instruction: "인상 깊은 대목을 더 구체적으로", experienceLine: null } });
+    expect(user).not.toMatch(/후기 근거가 없/);
+    expect(user).toMatch(/이전 초안에 없는 (새 )?사실/);
+  });
+
   it("[REQ-016] 후기 근거가 없으면 그 사실을 알려 인상 깊은 대목을 지어내지 않게 한다", () => {
     const { user } = buildPrompt(base);
     expect(user).toMatch(/후기 근거가 없/);

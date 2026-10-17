@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Product } from "@contract/domain.js";
-import { LLM_MODEL_REVIEW, REVIEW_SEARCH_MAX_USES, REVIEW_SOURCES_MAX } from "@contract/domain.js";
+import { LLM_MODEL_REVIEW, REVIEW_NOTES_MAX_CHARS, REVIEW_SEARCH_MAX_USES, REVIEW_SOURCES_MAX } from "@contract/domain.js";
 
 import { LlmRefusalError } from "./body-generator.js";
 import { buildReviewPrompt, createReviewCollector } from "./review-collector.js";
@@ -35,7 +35,11 @@ const fakeClient = (...responses: Record<string, unknown>[]) => {
 describe("createReviewCollector", () => {
   it("[REQ-016] 웹검색 도구(최대 REVIEW_SEARCH_MAX_USES회)를 붙여 후기 모델에 요청하고, 의역 노트와 출처 URL을 돌려준다", async () => {
     const { client, create } = fakeClient({
-      content: [text("준비 중"), searchBlock([searchResult("https://blog.example.com/a"), searchResult("https://blog.example.com/b")]), text("- 분위기: 잔잔하다는 평이 많아요")],
+      content: [
+        text("준비 중"),
+        searchBlock([searchResult("https://blog.example.com/a"), searchResult("https://blog.example.com/b")]),
+        cited("- 분위기: 잔잔하다는 평이 많아요", cite("https://blog.example.com/a", "원문 A"), cite("https://blog.example.com/b", "원문 B")),
+      ],
       stop_reason: "end_turn",
       usage: usage({ server_tool_use: { web_search_requests: 2 } }),
     });
@@ -96,7 +100,7 @@ describe("createReviewCollector", () => {
   it("[REQ-016] 같은 URL은 한 번만, 출처는 REVIEW_SOURCES_MAX개까지만 남긴다", async () => {
     const many = Array.from({ length: REVIEW_SOURCES_MAX + 5 }, (_, i) => searchResult(`https://blog.example.com/${i}`));
     const { client } = fakeClient({
-      content: [searchBlock([searchResult("https://blog.example.com/0"), ...many]), text("- 메모")],
+      content: [searchBlock([searchResult("https://blog.example.com/0"), ...many]), cited("- 메모", cite("https://blog.example.com/0", "x"), ...many.map((m) => cite(m.url, "x")))],
       stop_reason: "end_turn",
       usage: usage(),
     });
@@ -113,13 +117,15 @@ describe("createReviewCollector", () => {
     });
     expect(await createReviewCollector({ client, onUsage: () => {} }).collect(product)).toEqual({ notes: "", sources: [] });
 
-    const bad = fakeClient({ content: [searchBlock([searchResult("javascript:alert(1)")]), text("메모")], stop_reason: "end_turn", usage: usage() });
-    expect((await createReviewCollector({ client: bad.client, onUsage: () => {} }).collect(product)).sources).toEqual([]);
+    for (const url of ["javascript:alert(1)", "http://", "https://"]) {
+      const bad = fakeClient({ content: [searchBlock([searchResult(url)]), cited("메모", cite(url, "x"))], stop_reason: "end_turn", usage: usage() });
+      expect((await createReviewCollector({ client: bad.client, onUsage: () => {} }).collect(product)).sources).toEqual([]);
+    }
   });
 
   it("[NFR-001] 토큰과 웹검색 횟수를 보고하고, pause_turn이면 이어서 호출해 사용량을 합산한다", async () => {
     const paused = { content: [searchBlock([searchResult("https://blog.example.com/a")])], stop_reason: "pause_turn", usage: usage({ server_tool_use: { web_search_requests: 1 } }) };
-    const done = { content: [text("- 메모")], stop_reason: "end_turn", usage: { input_tokens: 500, output_tokens: 100, server_tool_use: { web_search_requests: 1 } } };
+    const done = { content: [cited("- 메모", cite("https://blog.example.com/a", "x"))], stop_reason: "end_turn", usage: { input_tokens: 500, output_tokens: 100, server_tool_use: { web_search_requests: 1 } } };
     const { client, create } = fakeClient(paused, done);
     const onUsage = vi.fn();
     const evidence = await createReviewCollector({ client, onUsage }).collect(product);
@@ -131,6 +137,63 @@ describe("createReviewCollector", () => {
     expect(onUsage).toHaveBeenCalledTimes(2);
     expect(onUsage).toHaveBeenNthCalledWith(1, { model: LLM_MODEL_REVIEW, inputTokens: 1000, outputTokens: 300, cacheReadTokens: 0, webSearchRequests: 1 });
     expect(onUsage).toHaveBeenNthCalledWith(2, { model: LLM_MODEL_REVIEW, inputTokens: 500, outputTokens: 100, cacheReadTokens: 0, webSearchRequests: 1 });
+  });
+
+  it("[REQ-016] 인용이 하나도 없으면 검색 결과 URL이 있어도 근거 없음으로 본다(서평을 못 찾은 책에 출처 10건이 붙지 않게)", async () => {
+    const { client } = fakeClient({
+      content: [searchBlock([searchResult("https://shop.example.com/a"), searchResult("https://shop.example.com/b")]), text("후기를 찾지 못했습니다")],
+      stop_reason: "end_turn",
+      usage: usage(),
+    });
+    expect(await createReviewCollector({ client, onUsage: () => {} }).collect(product)).toEqual({ notes: "", sources: [] });
+  });
+
+  it("[REQ-016] 검색 결과에 없던 URL을 인용했다고 주장해도 출처로 치지 않는다", async () => {
+    const { client } = fakeClient({
+      content: [searchBlock([searchResult("https://blog.example.com/a")]), cited("메모", cite("https://made-up.example.com/x", "x"))],
+      stop_reason: "end_turn",
+      usage: usage(),
+    });
+    expect((await createReviewCollector({ client, onUsage: () => {} }).collect(product)).sources).toEqual([]);
+  });
+
+  it("[NFR-001] 서버 도구 이어 호출이 계속돼도 검색 총합이 REVIEW_SEARCH_MAX_USES에 닿으면 더 부르지 않는다", async () => {
+    const paused = (n: number) => ({ content: [searchBlock([searchResult(`https://blog.example.com/${n}`)])], stop_reason: "pause_turn", usage: usage({ server_tool_use: { web_search_requests: REVIEW_SEARCH_MAX_USES } }) });
+    const { client, create } = fakeClient(paused(1), paused(2), paused(3));
+    await createReviewCollector({ client, onUsage: () => {} }).collect(product);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("[REQ-016] 후기 원문 조각과 20자 이상 겹치는 문장은 노트에서 버리고, 의역한 문장만 남긴다", async () => {
+    const copied = "깨달음은 가르칠 수 없고 직접 체험으로만 알 수 있다고 보고 떠나는 대목이 많이 언급됐어요.";
+    const paraphrased = "분위기가 맑고 투명하다는 평이 많아요.";
+    const { client } = fakeClient({
+      content: [searchBlock([searchResult("https://blog.example.com/a")]), cited(`${copied}\n${paraphrased}`, cite("https://blog.example.com/a", "깨달음은 가르칠 수 없고 직접 체험으로만 알 수 있다"))],
+      stop_reason: "end_turn",
+      usage: usage(),
+    });
+    const evidence = await createReviewCollector({ client, onUsage: () => {} }).collect(product);
+    expect(evidence.notes).toBe(paraphrased);
+    expect(evidence.notes).not.toContain("가르칠 수 없고");
+  });
+
+  it("[REQ-016] 노트가 전부 원문 복사면 근거 없음으로 본다", async () => {
+    const copied = "깨달음은 가르칠 수 없고 직접 체험으로만 알 수 있다고 해요.";
+    const { client } = fakeClient({
+      content: [searchBlock([searchResult("https://blog.example.com/a")]), cited(copied, cite("https://blog.example.com/a", "깨달음은 가르칠 수 없고 직접 체험으로만 알 수 있다"))],
+      stop_reason: "end_turn",
+      usage: usage(),
+    });
+    expect(await createReviewCollector({ client, onUsage: () => {} }).collect(product)).toEqual({ notes: "", sources: [] });
+  });
+
+  it("[REQ-016] 노트는 REVIEW_NOTES_MAX_CHARS로 자른다(웹 내용이 프롬프트를 무한정 키우지 못하게)", async () => {
+    const { client } = fakeClient({
+      content: [searchBlock([searchResult("https://blog.example.com/a")]), cited("가".repeat(REVIEW_NOTES_MAX_CHARS + 500), cite("https://blog.example.com/a", "x"))],
+      stop_reason: "end_turn",
+      usage: usage(),
+    });
+    expect((await createReviewCollector({ client, onUsage: () => {} }).collect(product)).notes.length).toBeLessThanOrEqual(REVIEW_NOTES_MAX_CHARS);
   });
 
   it("[REQ-016] 거절(refusal)은 LlmRefusalError — 사용량은 먼저 보고한다", async () => {

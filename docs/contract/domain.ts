@@ -31,8 +31,10 @@ export const CARD_PREVIEW_MAX_CHARS = 2500; // REQ-007 초안 카드 본문 미�
 export const COUPANG_PARTNER_HOSTS = ["link.coupang.com", "coupa.ng"] as const;
 /** REQ-001 책 후보 범위(ADR-010 결정 2026-10-07): YES24 소설/시/희곡·에세이 베스트셀러만. 시험서·문제집은 리뷰형에 맞지 않아 제외. */
 export const BOOK_CANDIDATE_CATEGORY_IDS = ["001001046", "001001047"] as const;
-/** REQ-016 후기 수집 시 검색 최대 횟수(비용 상한). */
+/** REQ-016 후기 수집 한 번에 쓰는 웹검색 총 횟수 상한(비용 상한, 이어 호출을 합산해 적용). */
 export const REVIEW_SEARCH_MAX_USES = 3;
+/** REQ-016 후기 노트 길이 상한(웹에서 온 내용이 생성 프롬프트를 무한정 키우지 못하게). */
+export const REVIEW_NOTES_MAX_CHARS = 3000;
 /** REQ-016 초안에 보관하는 후기 출처 URL 수 상한. */
 export const REVIEW_SOURCES_MAX = 10;
 /** REQ-002 모델에 보내는 소개문·목차 각각의 글자 수 상한(토큰 절약, 목차는 수천 자까지 온다). */

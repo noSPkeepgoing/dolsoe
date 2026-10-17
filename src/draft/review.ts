@@ -46,8 +46,10 @@ export async function gatherReviews(
   const book = products[0];
   if (category !== "book" || book === undefined) return {};
   const evidence = await collectReviewsSafely(collector, book, onFailure);
+  // 노트가 비면 근거가 없는 것이다 — 출처만 남아 카드에 "후기 N건 참고"가 뜨지 않게 함께 비운다.
+  if (evidence.notes.trim().length === 0) return { reviewSources: [] };
   return {
-    ...(evidence.notes.trim().length > 0 ? { reviewNotes: evidence.notes } : {}),
+    reviewNotes: evidence.notes,
     reviewSources: evidence.sources,
     ...(evidence.excerpts !== undefined && evidence.excerpts.length > 0 ? { reviewExcerpts: evidence.excerpts } : {}),
   };

@@ -1,8 +1,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
 import type { Product } from "@contract/domain.js";
-import { LLM_MODEL_REVIEW, REVIEW_SEARCH_MAX_USES, REVIEW_SOURCES_MAX, YES24_HOST_SUFFIX } from "@contract/domain.js";
+import { LLM_MODEL_REVIEW, REVIEW_NOTES_MAX_CHARS, REVIEW_SEARCH_MAX_USES, REVIEW_SOURCES_MAX, YES24_HOST_SUFFIX } from "@contract/domain.js";
 
+import { dropCopiedSentences } from "../draft/quality-check.js";
 import type { ReviewCollector, ReviewEvidence } from "../draft/review.js";
 
 import { LlmRefusalError, type LlmUsageReport } from "./body-generator.js";
@@ -45,7 +46,16 @@ interface LooseCitation {
   cited_text?: unknown;
 }
 
-const isHttpUrl = (value: unknown): value is string => typeof value === "string" && /^https?:\/\//i.test(value);
+/** 파싱되는 http(s) URL만. 모양만 비슷한 깨진 URL은 계약(`z.string().url()`)에서 초안 읽기를 깨뜨리므로 여기서 거른다. */
+function isHttpUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const { protocol, hostname } = new URL(value);
+    return (protocol === "http:" || protocol === "https:") && hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
 
 /** 마지막 검색 결과 뒤의 블록들 — 모델이 정리해 쓴 글(검색 중간의 혼잣말은 제외). */
 const afterLastSearch = (blocks: readonly LooseBlock[]): LooseBlock[] =>
@@ -72,13 +82,13 @@ function collectResultUrls(blocks: readonly LooseBlock[]): string[] {
 const unique = <T>(values: readonly T[]): T[] => [...new Set(values)];
 
 /**
- * 출처: 노트에 실제 인용된 URL(= "참고한 후기"). 인용이 하나도 없으면 검색 결과 URL로 대신한다.
+ * 출처: 노트에 실제 인용된 URL(= "참고한 후기"). 인용이 없으면 출처도 없다 — 검색에 걸렸을 뿐인 페이지(쇼핑몰 등)를 근거로 세지 않는다.
  * 인용 URL은 검색 결과 안에 있던 것만 인정한다(지어낸 URL 방지).
  */
 function collectSources(blocks: readonly LooseBlock[]): string[] {
   const results = new Set(collectResultUrls(blocks));
-  const cited = unique(collectCitations(blocks).flatMap((citation) => (isHttpUrl(citation.url) && results.has(citation.url) ? [citation.url] : [])));
-  return (cited.length > 0 ? cited : [...results]).slice(0, REVIEW_SOURCES_MAX);
+  const cited = collectCitations(blocks).flatMap((citation) => (isHttpUrl(citation.url) && results.has(citation.url) ? [citation.url] : []));
+  return unique(cited).slice(0, REVIEW_SOURCES_MAX);
 }
 
 /** 인용 단위로 쪼개진 텍스트 블록을 그대로 이어 붙여 정리글을 복원한다. */
@@ -106,6 +116,7 @@ export function createReviewCollector(options: {
       const { system, user } = buildReviewPrompt(product);
       const messages: Anthropic.MessageParam[] = [{ role: "user", content: user }];
       const blocks: LooseBlock[] = [];
+      let searches = 0;
 
       for (let attempt = 0; attempt <= MAX_CONTINUATIONS; attempt++) {
         const response = await options.client.messages.create({
@@ -125,17 +136,20 @@ export function createReviewCollector(options: {
           ],
         });
 
+        const searchesThisCall = response.usage.server_tool_use?.web_search_requests ?? 0;
+        searches += searchesThisCall;
         options.onUsage({
           model: LLM_MODEL_REVIEW,
           inputTokens: response.usage.input_tokens,
           outputTokens: response.usage.output_tokens,
           cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
-          webSearchRequests: response.usage.server_tool_use?.web_search_requests ?? 0,
+          webSearchRequests: searchesThisCall,
         });
 
         if (response.stop_reason === "refusal") throw new LlmRefusalError("모델이 후기 수집 요청을 거절했습니다");
         blocks.push(...(response.content as LooseBlock[]));
-        if (response.stop_reason !== "pause_turn") break;
+        // `max_uses`는 요청당 한도라 이어 호출마다 새로 시작된다 — 총합이 상한에 닿으면 더 부르지 않는다(비용 상한).
+        if (response.stop_reason !== "pause_turn" || searches >= REVIEW_SEARCH_MAX_USES) break;
         // 서버 도구 반복 한도에 걸려 멈춘 것 — 응답을 그대로 이어 보내면 서버가 거기서부터 계속한다("계속해줘" 메시지를 덧붙이지 않는다).
         messages.push({ role: "assistant", content: response.content });
       }
@@ -143,7 +157,10 @@ export function createReviewCollector(options: {
       const sources = collectSources(blocks);
       if (sources.length === 0) return { notes: "", sources: [] };
       const excerpts = collectExcerpts(blocks);
-      return { notes: collectNotes(blocks), sources, ...(excerpts.length > 0 ? { excerpts } : {}) };
+      // 수집 모델이 후기 문장을 베껴 쓴 부분은 노트에서 버린다 — 생성 모델이 그걸 다시 베끼기 전에 막는다(REQ-016).
+      const notes = dropCopiedSentences(collectNotes(blocks), excerpts).slice(0, REVIEW_NOTES_MAX_CHARS).trimEnd();
+      if (notes.length === 0) return { notes: "", sources: [] };
+      return { notes, sources, ...(excerpts.length > 0 ? { excerpts } : {}) };
     },
   };
 }

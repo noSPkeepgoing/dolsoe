@@ -49,4 +49,9 @@ describe("gatherReviews", () => {
   it("[REQ-016] 책인데 근거가 없으면 노트·원문 조각 없이 출처만 빈 목록으로 남긴다(카드: 후기 근거 없음)", async () => {
     expect(await gatherReviews("book", [product], undefined)).toEqual({ reviewSources: [] });
   });
+
+  it("[REQ-016] 노트가 비면 출처가 남아 있어도 '후기 N건 참고'가 뜨지 않게 출처를 비운다", async () => {
+    const odd: ReviewCollector = { collect: async () => ({ notes: "  ", sources: ["https://shop.example.com/a"], excerpts: ["조각"] }) };
+    expect(await gatherReviews("book", [product], odd)).toEqual({ reviewSources: [] });
+  });
 });
