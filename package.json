@@ -6,6 +6,7 @@
   "description": "텔레그램 승인형 블로그 수익화 자동화 (돌쇠)",
   "scripts": {
     "start": "tsx src/main.ts",
+    "naver:login": "tsx scripts/naver-login.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
@@ -15,6 +16,7 @@
     "better-sqlite3": "^13.0.3",
     "dotenv": "^18.0.4",
     "grammy": "^1.46.0",
+    "playwright": "^1.64.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {

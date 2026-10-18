@@ -334,3 +334,47 @@ describe("recoverStuckPublishing", () => {
     await expect(recoverStuckPublishing(deps)).resolves.toBe(0);
   });
 });
+
+describe("publishDraft — 네이버 임시저장(draft) 단계 (ADR-005 개정)", () => {
+  it("[REQ-012] 임시저장이 되면 handed_off(사람이 공개)가 되고, 임시저장함에서 확인·발행하라고 안내한다", async () => {
+    const draftPublisher = fakePublisher("draft", [ok("draft")]);
+    const manual = fakePublisher("manual", []);
+    const { db, draft, deps, lastNotice, status } = setup([draftPublisher, manual]);
+    await expect(publishDraft(deps, draft.id)).resolves.toBe("handed_off");
+    expect(status()).toBe("handed_off");
+    expect(lastNotice()).toContain("임시저장");
+    expect(lastNotice()).toContain("발행");
+    expect(manual.publish).not.toHaveBeenCalled();
+    expect(listPublishAttempts(db, draft.id).map((attempt) => [attempt.mode, attempt.result?.ok])).toEqual([["draft", true]]);
+  });
+
+  it("[REQ-013] 세션 만료로 임시저장이 안 되면 텔레그램 전달로 내려가되, 재인증 필요와 로그인 방법을 같이 알린다", async () => {
+    const draftPublisher = fakePublisher("draft", [fail("draft", { authExpired: true, reason: "네이버 로그인 세션 만료" })]);
+    const manual = fakePublisher("manual", []);
+    const { draft, deps, lastNotice, status } = setup([draftPublisher, manual]);
+    await expect(publishDraft(deps, draft.id)).resolves.toBe("handed_off");
+    expect(status()).toBe("handed_off");
+    expect(lastNotice()).toContain("붙여넣");
+    expect(lastNotice()).toContain("재인증 필요");
+    expect(lastNotice()).toContain("naver:login");
+  });
+
+  it("[REQ-013] 임시저장 단계가 인증 만료로 끝까지 실패하면 글쓰기 API가 아니라 로그인 재실행을 안내한다", async () => {
+    const draftPublisher = fakePublisher("draft", [fail("draft", { authExpired: true })]);
+    const { draft, deps, lastNotice } = setup([draftPublisher]);
+    await expect(publishDraft(deps, draft.id)).resolves.toBe("failed");
+    expect(lastNotice("notifyFailure")).toContain("재인증 필요");
+    expect(lastNotice("notifyFailure")).toContain("naver:login");
+    expect(lastNotice("notifyFailure")).not.toContain("API");
+  });
+
+  it("[REQ-013] 임시저장 단계가 던지면(결과 불확실) 텔레그램 전달로 내려가지 않고 사람 확인을 요청한다", async () => {
+    const draftPublisher = fakePublisher("draft", [new Error("브라우저가 죽음")]);
+    const manual = fakePublisher("manual", []);
+    const { draft, deps, lastNotice, status } = setup([draftPublisher, manual]);
+    await expect(publishDraft(deps, draft.id)).resolves.toBe("failed");
+    expect(manual.publish).not.toHaveBeenCalled();
+    expect(status()).toBe("failed");
+    expect(lastNotice("notifyFailure")).toContain("임시저장함");
+  });
+});

@@ -162,7 +162,7 @@ export const DraftStatusSchema = z.enum([
   "awaiting_approval",
   "publishing",
   "published", // 자동 발행(live/private) 성공
-  "handed_off", // ③ 텔레그램으로 본문 전달 완료(사람이 복붙)
+  "handed_off", // 사람이 이어받음: draft 네이버 임시저장 완료(공개는 사람) 또는 manual 텔레그램 본문 전달(복붙)
   "discarded",
   "failed", // 발행 실패·결과 불확실 — 사람 확인 필요
 ]);
@@ -199,10 +199,10 @@ export const DraftSchema = z.object({
 export type Draft = z.infer<typeof DraftSchema>;
 
 // ── 발행 (REQ-012·013, ADR-005) ────────────────────────────────────
-export const PublishModeSchema = z.enum(["live", "private", "manual"]); // 사다리 ①②③
+export const PublishModeSchema = z.enum(["live", "private", "draft", "manual"]); // 사다리 ①live ②private ③draft(브라우저 임시저장, ADR-005 개정) ④manual
 export type PublishMode = z.infer<typeof PublishModeSchema>;
 /** 사다리 시도 순서. 실제 활성 목록은 config가 결정(1차 구현은 ["manual"]만). */
-export const PUBLISH_LADDER: readonly PublishMode[] = ["live", "private", "manual"];
+export const PUBLISH_LADDER: readonly PublishMode[] = ["live", "private", "draft", "manual"];
 
 export const PublishResultSchema = z.discriminatedUnion("ok", [
   z.object({

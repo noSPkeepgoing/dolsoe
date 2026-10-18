@@ -16,6 +16,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...VALID_ENV, DB_PATH: "/tmp/x.db" }).DB_PATH).toBe("/tmp/x.db");
   });
 
+  it("[REQ-012] NAVER_PROFILE_DIR는 선택이다 — 없으면 네이버 임시저장 단계 없이 텔레그램 전달만 쓴다", () => {
+    expect(loadConfig(VALID_ENV).NAVER_PROFILE_DIR).toBeUndefined();
+    expect(loadConfig({ ...VALID_ENV, NAVER_PROFILE_DIR: "data/naver-profile" }).NAVER_PROFILE_DIR).toBe("data/naver-profile");
+  });
+
   it("[NFR-003] 봇 토큰이 없으면 어떤 키가 문제인지 알려주며 실패한다", () => {
     expect(() => loadConfig({ OWNER_CHAT_ID: "1" })).toThrow(/TELEGRAM_BOT_TOKEN/);
   });

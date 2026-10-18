@@ -17,6 +17,8 @@ import { createBodyGenerator } from "./llm/body-generator.js";
 import { createReviewCollector } from "./llm/review-collector.js";
 import { recordLlmUsage } from "./llm/usage.js";
 import { createHandoffPublisher } from "./publish/handoff.js";
+import { createNaverDraftPublisher } from "./publish/naver.js";
+import { createPlaywrightNaverDriver } from "./publish/naver-playwright.js";
 import { recoverStuckPublishing, type PublishDeps } from "./publish/orchestrator.js";
 import { createScheduler } from "./schedule/scheduler.js";
 import { Yes24Source } from "./sources/yes24.js";
@@ -49,10 +51,12 @@ async function main(): Promise<void> {
 
   const approvalStore = createApprovalStore(db, now);
   const approval = { store: approvalStore, generator, getMonthCostKrw: store.getMonthCostKrw, ...messenger };
-  // 발행 사다리(ADR-005): 1차 구현은 ③ 텔레그램 전달만. 네이버 어댑터는 1.5 스파이크 뒤 위 단계로 추가한다.
+  // 발행 사다리(ADR-005 개정): NAVER_PROFILE_DIR가 있으면 ③ 네이버 임시저장 → ④ 텔레그램 전달, 없으면 ④만.
+  const naverDraft =
+    config.NAVER_PROFILE_DIR === undefined ? [] : [createNaverDraftPublisher({ driver: createPlaywrightNaverDriver({ profileDir: config.NAVER_PROFILE_DIR }) })];
   const publish: PublishDeps = {
     store: { ...approvalStore, ...createPublishStore(db, now) },
-    publishers: [createHandoffPublisher({ sendChunk: messenger.sendChunk })],
+    publishers: [...naverDraft, createHandoffPublisher({ sendChunk: messenger.sendChunk })],
     notify: messenger.notify,
     notifyFailure: messenger.notifyFailure,
   };

@@ -33,25 +33,38 @@ type FailedResult = Extract<PublishResult, { ok: false }>;
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
-const MODE_LABEL: Record<PublishMode, string> = { live: "① 즉시 발행", private: "② 비공개 등록", manual: "③ 텔레그램 전달" };
+const MODE_LABEL: Record<PublishMode, string> = {
+  live: "① 즉시 발행",
+  private: "② 비공개 등록",
+  draft: "③ 네이버 임시저장",
+  manual: "④ 텔레그램 전달",
+};
+
+/** 사람이 마지막 단계를 이어받는 방식(공개 발행 또는 복붙). 이 방식이 성공하면 초안은 published가 아니라 handed_off다. */
+const HUMAN_FINISH_MODES: readonly PublishMode[] = ["draft", "manual"];
+
+/** REQ-013: 네이버 로그인 세션이 만료됐을 때의 재인증 안내. 로그인은 사람이 전용 프로필 창에서 직접 한다(NFR-003). */
+const REAUTH_NOTICE = "🔑 재인증 필요: 네이버 로그인 세션이 만료됐어요. 맥에서 `npm run naver:login`을 실행해 다시 로그인해 주세요.";
 
 function successText(id: number, result: Extract<PublishResult, { ok: true }>, fellBack: FailedResult[]): string {
   const where = result.url === null ? "" : `\n${result.url}`;
   const head: Record<PublishMode, string> = {
     live: `✅ #${id} 네이버에 즉시 발행했어요.${where}`,
     private: `✅ #${id} 네이버에 비공개로 등록했어요. 네이버에서 확인하고 공개로 전환해 주세요.${where}`,
+    draft: `✅ #${id} 네이버 블로그 임시저장함에 저장했어요. 네이버 블로그(앱·웹)의 임시저장함에서 내용을 확인하고 직접 발행해 주세요.`,
     manual: `✅ #${id} 발행 준비 완료 — 위 본문을 복사해 네이버 블로그에 붙여넣어 주세요.`,
   };
   const reasons = fellBack.map((failure) => `- ${MODE_LABEL[failure.mode]} 실패: ${failure.reason}`);
-  return reasons.length === 0 ? head[result.mode] : [head[result.mode], "위 단계가 안 돼서 다음 방식으로 처리했어요.", ...reasons].join("\n");
+  const reauth = fellBack.some((failure) => failure.authExpired) ? [REAUTH_NOTICE] : [];
+  return reasons.length === 0 ? head[result.mode] : [head[result.mode], "위 단계가 안 돼서 다음 방식으로 처리했어요.", ...reasons, ...reauth].join("\n");
 }
 
 function failureText(id: number, failures: FailedResult[], uncertain: boolean): string {
   const lines = failures.map((failure) => `- ${MODE_LABEL[failure.mode]}: ${failure.reason}`);
   const head = uncertain
-    ? `⚠️ #${id} 발행 결과가 불확실해요. 이미 올라갔을 수 있으니 네이버·채팅에서 실제 게시 여부를 먼저 확인한 뒤 다시 시도하거나 폐기해 주세요. 초안은 보존돼 있어요.`
+    ? `⚠️ #${id} 발행 결과가 불확실해요. 이미 올라갔을 수 있으니 네이버(임시저장함 포함)·채팅에서 실제 게시 여부를 먼저 확인한 뒤 다시 시도하거나 폐기해 주세요. 초안은 보존돼 있어요.`
     : `⚠️ #${id} 발행에 실패했어요(${PUBLISH_MAX_RETRIES}회 재시도 포함). 초안은 그대로 보존돼 있어요.`;
-  const auth = failures.some((failure) => failure.authExpired) ? ["🔑 재인증 필요: 네이버 인증이 만료됐어요. 글쓰기 API 인증 정보를 확인해 주세요."] : [];
+  const auth = failures.some((failure) => failure.authExpired) ? [REAUTH_NOTICE] : [];
   return [head, ...lines, ...auth].join("\n");
 }
 
@@ -135,7 +148,7 @@ async function runLadder(deps: PublishDeps, id: number, posts: { publisher: Publ
   for (const { publisher, post } of posts) {
     const outcome = await runRung(deps, publisher, post, id);
     if (outcome.kind === "ok") {
-      const next = outcome.result.mode === "manual" ? "handed_off" : "published";
+      const next = HUMAN_FINISH_MODES.includes(outcome.result.mode) ? "handed_off" : "published";
       store.transition(id, "publishing", next);
       await alert(() => deps.notify(successText(id, outcome.result, failures)));
       return next;

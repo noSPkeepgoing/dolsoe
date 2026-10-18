@@ -7,7 +7,7 @@ import { appendDisclosures } from "./disclosure.js";
 const ELLIPSIS = "…";
 
 /** 본문을 찾는 키 → 상품. 본문은 externalId로만 상품을 가리킨다(구매 링크는 렌더러가 붙인다). */
-const titleOf = (products: readonly Product[], externalId: string): string =>
+export const titleOf = (products: readonly Product[], externalId: string): string =>
   products.find((product) => product.externalId === externalId)?.title ?? externalId;
 
 /** 링크·대가성 문구를 뺀 읽는 본문. 카드 미리보기와 최종 본문이 공유한다(DRY). */
@@ -23,7 +23,7 @@ function renderBody(body: DraftBody, products: readonly Product[]): string[] {
   return [body.title, `줄거리\n${body.synopsis}`, `분위기\n${body.mood}`, `이런 사람에게\n${body.recommendedFor}`, `인상 깊은 대목\n${body.highlights}`];
 }
 
-const formatPrice = (product: Product): string | null => {
+export const formatPrice = (product: Product): string | null => {
   if (product.priceKrw === null) return null;
   const asOf = product.priceAsOf === null ? "" : ` (${kstMonthDay(new Date(product.priceAsOf))} 기준)`;
   return `약 ${product.priceKrw.toLocaleString("en-US")}원${asOf}`;

@@ -37,11 +37,11 @@ dolsoe/
 │   ├── draft/                # rules.ts(번갈아·중복·상한), quality-check.ts, generate.ts(생성 루프), store.ts(SQLite 저장소 어댑터)
 │   ├── sources/              # ProductSource 인터페이스 + 어댑터: yes24.ts, coupang-link.ts(1.3)
 │   ├── llm/                  # prompt.ts(순수), body-generator.ts(Anthropic 호출·zod 검증), cost.ts, usage.ts
-│   └── publish/              # publisher.ts(인터페이스), orchestrator.ts, handoff.ts, naver.ts(1.5), renderer.ts
+│   └── publish/              # publisher.ts(인터페이스), orchestrator.ts, handoff.ts, naver.ts(순수 어댑터·HTML 렌더), naver-playwright.ts(브라우저·화면 지식), renderer.ts
 └── data/dolsoe.db            # 런타임 생성 (.gitignore)
 ```
 - 순수 로직(번갈아 선택, 중복 제외 필터, 품질 검사, 상태 전이 판정, 렌더링)은 I/O와 분리해 **순수 함수**로 둔다 → 테스트 용이.
-- `bot/`은 `draft/`·`publish/`를 호출할 뿐, SQL을 직접 쓰지 않는다(`db.ts`만 SQL). 플랫폼(네이버) 지식은 `publish/naver.ts` 밖으로 새지 않는다(P3).
+- `bot/`은 `draft/`·`publish/`를 호출할 뿐, SQL을 직접 쓰지 않는다(`db.ts`만 SQL). 플랫폼(네이버) 지식은 `publish/naver.ts`·`naver-playwright.ts` 밖으로 새지 않는다(P3).
 - 외부 호출(LLM·상품 소스·텔레그램·네이버)은 각 모듈 경계에서 zod로 검증한 뒤 도메인 타입으로 넘긴다.
 
 ## 5. DTO·데이터 흐름

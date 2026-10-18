@@ -8,6 +8,8 @@ const ConfigSchema = z.object({
   // 1.2: 일일 초안에 필요. 스키마에서는 선택이지만 기동 시 requireDailyDraftKeys가 없으면 실패시킨다.
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   YES24_API_KEY: z.string().min(1).optional(),
+  // 1.5: 네이버 임시저장용 전용 브라우저 프로필 경로(ADR-005 개정). 없으면 임시저장 단계 없이 텔레그램 전달만 쓴다.
+  NAVER_PROFILE_DIR: z.string().min(1).optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
