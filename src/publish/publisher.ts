@@ -5,6 +5,8 @@ export interface Post {
   draftId: number;
   title: string;
   content: string;
+  /** 발행 결과 화면에 반드시 있어야 하는 문구(대가성 문구, REQ-010). 입력 문자열이 아니라 실제로 만들어진 화면에서 확인하는 발행기가 쓴다. */
+  mustContain: readonly string[];
 }
 
 /**

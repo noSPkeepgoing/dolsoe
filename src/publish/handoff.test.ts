@@ -21,7 +21,7 @@ const draft: Draft = {
   createdAt: "2026-10-01T00:00:00.000Z",
   updatedAt: "2026-10-01T00:00:00.000Z",
 };
-const post = (content: string) => ({ draftId: 3, title: "제목", content });
+const post = (content: string) => ({ draftId: 3, title: "제목", content, mustContain: [] });
 
 describe("createHandoffPublisher", () => {
   it("[REQ-012] 수동(③) 방식이고, 최종 산출물은 대가성 문구가 붙은 완성 본문이다", () => {

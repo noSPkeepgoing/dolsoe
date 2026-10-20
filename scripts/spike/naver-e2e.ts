@@ -1,4 +1,5 @@
 // 1.5 관통: 실제 렌더러 + Playwright 드라이버 + 퍼블리셔로 임시저장 1건. 발행은 하지 않는다.
+import "dotenv/config";
 import type { Draft } from "../../docs/contract/domain.js";
 import { createNaverDraftPublisher } from "../../src/publish/naver.js";
 import { createPlaywrightNaverDriver } from "../../src/publish/naver-playwright.js";
@@ -9,6 +10,6 @@ const draft: Draft = {
   body: { category: "book", title: "[돌쇠 관통] 어댑터 임시저장 테스트 — 지워도 되는 글", synopsis: "줄거리 문단이에요", mood: "분위기 문단이에요", recommendedFor: "이런 사람 문단이에요", highlights: "인상 깊은 대목 문단이에요", experienceLine: "출퇴근길에 읽었어요" },
   createdAt: "2026-10-18T00:00:00.000Z", updatedAt: "2026-10-18T00:00:00.000Z",
 };
-const publisher = createNaverDraftPublisher({ driver: createPlaywrightNaverDriver({ profileDir: "data/naver-profile" }) });
-const result = await publisher.publish({ draftId: draft.id, title: draft.body!.title, content: publisher.render(draft) });
+const publisher = createNaverDraftPublisher({ driver: createPlaywrightNaverDriver({ profileDir: process.env.NAVER_PROFILE_DIR ?? "data/naver-profile" }) });
+const result = await publisher.publish({ draftId: draft.id, title: draft.body!.title, content: publisher.render(draft), mustContain: ["이 포스팅은 YES24 애드온 링크를 포함하며"] });
 console.log(JSON.stringify(result));

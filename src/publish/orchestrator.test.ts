@@ -95,6 +95,13 @@ describe("publishDraft — 성공 경로", () => {
     expect(post.content).toContain(DISCLOSURE_TEXTS.yes24);
   });
 
+  it("[REQ-010] 발행기에는 화면에서 반드시 확인해야 할 대가성 문구 목록(mustContain)도 넘어간다", async () => {
+    const manual = fakePublisher("manual", []);
+    const { draft, deps } = setup([manual]);
+    await publishDraft(deps, draft.id);
+    expect(manual.publish.mock.calls[0]![0].mustContain).toEqual([DISCLOSURE_TEXTS.yes24]);
+  });
+
   it("[REQ-012] ① 즉시 발행(live)이 되면 published, 알림에 즉시 발행과 주소가 표시된다", async () => {
     const live = fakePublisher("live", [ok("live", "https://blog.naver.com/me/1")]);
     const { draft, deps, lastNotice, status } = setup([live]);

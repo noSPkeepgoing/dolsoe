@@ -1,4 +1,5 @@
 // 1.5 스파이크: 저장된 프로필로 글쓰기 화면을 열어 구조만 읽는다(글은 쓰지 않는다).
+import "dotenv/config";
 import { chromium } from "playwright";
 
 const PROFILE = process.env.NAVER_PROFILE_DIR ?? "data/naver-profile";

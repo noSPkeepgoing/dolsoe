@@ -16,7 +16,15 @@ export type NaverEditorOutcome =
 
 export interface NaverEditorDriver {
   /** 새 글에 제목·본문(HTML)을 넣고 임시저장만 한다. 발행은 절대 하지 않는다. 결과를 알 수 없게 죽으면 던진다. */
-  saveDraft(input: { title: string; html: string }): Promise<NaverEditorOutcome>;
+  saveDraft(input: { title: string; html: string; mustContain: readonly string[] }): Promise<NaverEditorOutcome>;
+}
+
+const collapseSpaces = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** 에디터 화면 전체 텍스트에서 빠진 문구(공백·줄바꿈 차이 무시). 붙여넣기가 잘려 대가성 문구가 사라진 글이 저장되지 않게 드라이버가 저장 전에 건다(REQ-010). */
+export function missingTexts(editorText: string, required: readonly string[]): string[] {
+  const haystack = collapseSpaces(editorText);
+  return required.filter((text) => !haystack.includes(collapseSpaces(text)));
 }
 
 const escapeHtml = (text: string): string =>
@@ -43,7 +51,8 @@ function renderBodyHtml(body: DraftBody, products: readonly Product[]): string[]
 function renderLinksHtml(products: readonly Product[]): string {
   const items = products.map((product) => {
     const price = formatPrice(product);
-    const link = `<a href="${escapeHtml(product.url)}">${escapeHtml(product.title)}</a>`;
+    // 링크는 http(s)만. 다른 스킴(javascript: 등)은 링크 없이 제목만 보인다.
+    const link = /^https?:\/\//i.test(product.url) ? `<a href="${escapeHtml(product.url)}">${escapeHtml(product.title)}</a>` : escapeHtml(product.title);
     return `<p>${link}${price === null ? "" : ` — ${escapeHtml(price)}`}</p>`;
   });
   return `<h3>구매 링크</h3>\n${items.join("\n")}`;
@@ -61,16 +70,18 @@ export function renderNaverHtml(draft: Draft): string {
 
 /**
  * 사다리 ③(ADR-005 개정): 브라우저로 네이버 에디터에 글을 채우고 임시저장까지만 한다. 공개는 사람이 한다.
- * 화면에서 명확히 막힌 경우(세션 만료·에디터 못 찾음·저장 확인 실패)는 retryable=false 실패로 돌려 ④ 텔레그램 전달로 내려가게 하고,
- * 드라이버가 던지면 그대로 던져 Orchestrator가 결과 불확실로 멈추게 한다(ADR-006).
+ * 저장을 누르기 전에 명확히 막힌 경우(세션 만료·에디터 못 찾음)는 retryable=false 실패로 돌려 ④ 텔레그램 전달로 내려가게 한다.
+ * 저장을 눌렀는데 완료를 확인 못 한 경우와 드라이버가 던진 경우는 올라갔는지 알 수 없으므로 던져서 Orchestrator가 결과 불확실로 멈추게 한다(ADR-006) —
+ * 폴백하면 임시저장 글과 텔레그램 본문이 겹쳐 중복 글이 된다.
  */
 export function createNaverDraftPublisher(deps: { driver: NaverEditorDriver }): Publisher {
   return {
     mode: "draft",
     render: renderNaverHtml,
     async publish(post: Post): Promise<PublishResult> {
-      const outcome = await deps.driver.saveDraft({ title: post.title, html: post.content });
+      const outcome = await deps.driver.saveDraft({ title: post.title, html: post.content, mustContain: post.mustContain });
       if (outcome.ok) return { ok: true, mode: "draft", url: null, externalId: null };
+      if (outcome.reason === "save_unconfirmed") throw new Error(outcome.detail);
       const authExpired = outcome.reason === "auth_expired";
       return { ok: false, mode: "draft", retryable: false, authExpired, reason: authExpired ? "네이버 로그인 세션이 만료됐어요" : outcome.detail };
     },

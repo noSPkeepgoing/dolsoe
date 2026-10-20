@@ -4,7 +4,7 @@ import { PUBLISH_MAX_RETRIES, PublishResultSchema } from "@contract/domain.js";
 import type { ApprovalStore } from "../draft/approval.js";
 import { clearPendingRevisionFor } from "../draft/approval.js";
 
-import { missingDisclosures } from "./disclosure.js";
+import { missingDisclosures, requiredDisclosures } from "./disclosure.js";
 import type { Post, Publisher } from "./publisher.js";
 
 /** 발행 시도 로그와 발행 중 초안 조회(ADR-006). 실제 구현은 draft/store.ts(SQLite). */
@@ -117,7 +117,7 @@ export async function publishDraft(deps: PublishDeps, id: number): Promise<Publi
   if (draft === null || draft.body === null) return "ignored";
   if (draft.status !== "awaiting_approval" && draft.status !== "failed") return "ignored";
 
-  const posts = deps.publishers.map((publisher) => ({ publisher, post: { draftId: id, title: draft.body!.title, content: publisher.render(draft) } }));
+  const posts = deps.publishers.map((publisher) => ({ publisher, post: { draftId: id, title: draft.body!.title, content: publisher.render(draft), mustContain: requiredDisclosures(draft.products) } }));
   if (posts.some(({ post }) => missingDisclosures(post.content, draft.products).length > 0)) {
     await alert(() => deps.notify(`#${id} 초안에 대가성 문구가 없어 발행을 막았어요. 초안은 그대로 남아 있어요.`));
     return "blocked";

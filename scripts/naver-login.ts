@@ -1,3 +1,4 @@
+import "dotenv/config";
 // 전용 프로필 창을 열어 사람이 네이버에 직접 로그인한다(최초 1회·세션 만료 시). 글쓰기 화면이 열리면 자동 종료. 비밀번호는 다루지 않는다(NFR-003).
 import { chromium } from "playwright";
 

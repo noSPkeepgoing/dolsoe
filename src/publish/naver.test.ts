@@ -4,7 +4,7 @@ import type { Draft, DraftBody, Product } from "@contract/domain.js";
 import { DISCLOSURE_TEXTS } from "@contract/domain.js";
 
 import { missingDisclosures } from "./disclosure.js";
-import { createNaverDraftPublisher, renderNaverHtml, type NaverEditorDriver } from "./naver.js";
+import { createNaverDraftPublisher, missingTexts, renderNaverHtml, type NaverEditorDriver } from "./naver.js";
 
 const product = (id: string, over: Partial<Product> = {}): Product => ({
   externalId: id,
@@ -98,14 +98,14 @@ const fakeDriver = (result: Awaited<ReturnType<NaverEditorDriver["saveDraft"]>> 
 };
 
 describe("createNaverDraftPublisher — 임시저장 어댑터", () => {
-  const post = { draftId: 7, title: "제목", content: "<p>본문</p>" };
+  const post = { draftId: 7, title: "제목", content: "<p>본문</p>", mustContain: ["대가성 문구"] };
 
   it("[REQ-012] 임시저장되면 draft 모드 성공을 돌려주고, 드라이버엔 제목과 HTML이 그대로 간다", async () => {
     const driver = fakeDriver({ ok: true });
     const publisher = createNaverDraftPublisher({ driver });
     expect(publisher.mode).toBe("draft");
     await expect(publisher.publish(post)).resolves.toEqual({ ok: true, mode: "draft", url: null, externalId: null });
-    expect(driver.saveDraft).toHaveBeenCalledWith({ title: "제목", html: "<p>본문</p>" });
+    expect(driver.saveDraft).toHaveBeenCalledWith({ title: "제목", html: "<p>본문</p>", mustContain: ["대가성 문구"] });
   });
 
   it("[REQ-013] 로그인 세션이 만료되면 authExpired 실패로 보고한다(재시도 없이 다음 단계로 내려가도록)", async () => {
@@ -113,15 +113,41 @@ describe("createNaverDraftPublisher — 임시저장 어댑터", () => {
     await expect(publisher.publish(post)).resolves.toMatchObject({ ok: false, mode: "draft", authExpired: true, retryable: false });
   });
 
-  it("[REQ-013] 에디터를 못 찾거나 저장 확인을 못 하면 사유와 함께 명확한 실패로 보고한다", async () => {
+  it("[REQ-013] 에디터를 못 찾으면(저장 전) 사유와 함께 명확한 실패로 보고한다", async () => {
     const publisher = createNaverDraftPublisher({ driver: fakeDriver({ ok: false, reason: "editor_unavailable", detail: "제목 입력칸을 못 찾음" }) });
     const result = await publisher.publish(post);
     expect(result).toMatchObject({ ok: false, mode: "draft", authExpired: false, retryable: false });
     expect(result.ok === false && result.reason).toContain("제목 입력칸을 못 찾음");
   });
 
+  it("[REQ-013] 저장을 눌렀는데 완료를 확인 못 하면 결과 불확실로 던진다 — ④ 폴백으로 중복 글이 생기지 않게 Orchestrator가 멈추도록(ADR-006)", async () => {
+    const publisher = createNaverDraftPublisher({ driver: fakeDriver({ ok: false, reason: "save_unconfirmed", detail: "저장 완료를 확인하지 못했어요" }) });
+    await expect(publisher.publish(post)).rejects.toThrow("저장 완료를 확인하지 못했어요");
+  });
+
   it("[REQ-013] 드라이버가 던지면 그대로 던진다(결과 불확실 — Orchestrator가 자동 재시도 없이 멈춘다)", async () => {
     const publisher = createNaverDraftPublisher({ driver: fakeDriver(new Error("브라우저가 죽음")) });
     await expect(publisher.publish(post)).rejects.toThrow("브라우저가 죽음");
+  });
+});
+
+describe("renderNaverHtml — 링크 안전", () => {
+  it("[REQ-012] http/https가 아닌 스킴의 URL은 링크로 만들지 않고 제목 텍스트로만 보인다", () => {
+    const html = renderNaverHtml(draft(bookBody(), [product("1", { url: "javascript:alert(1)" })]));
+    expect(html).not.toContain("javascript:");
+    expect(html).not.toContain("<a ");
+    expect(html).toContain("책 1");
+  });
+});
+
+describe("missingTexts — 에디터 화면에서 반드시 있어야 할 문구 검증", () => {
+  it("[REQ-010] 에디터 전체 텍스트에 빠진 문구만 돌려준다(공백·줄바꿈 차이는 무시)", () => {
+    const editorText = "제목\n줄거리\n이 포스팅은 YES24 애드온 링크를   포함하며,\n구매 시 수수료를 제공받습니다.";
+    expect(missingTexts(editorText, ["이 포스팅은 YES24 애드온 링크를 포함하며, 구매 시 수수료를 제공받습니다."])).toEqual([]);
+    expect(missingTexts(editorText, ["없는 문구", "줄거리"])).toEqual(["없는 문구"]);
+  });
+
+  it("[REQ-010] 붙여넣기가 중간에 잘려 마지막 문단(대가성 문구)이 빠지면 빠진 것으로 잡는다", () => {
+    expect(missingTexts("제목\n줄거리 문단이에요", [DISCLOSURE_TEXTS.yes24])).toEqual([DISCLOSURE_TEXTS.yes24]);
   });
 });
