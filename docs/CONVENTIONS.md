@@ -34,10 +34,10 @@ dolsoe/
 │   ├── schedule/             # time.ts(KST 계산·기동 계획), scheduler.ts(60초 tick, due_at 실행)
 │   ├── jobs/                 # daily-draft.ts: 일일 초안 작업(상한→소스→중복→생성→저장). 의존성은 인자로 주입
 │   ├── bot/                  # grammY: 미들웨어(소유자 필터), 핸들러, 초안 카드 포맷터
-│   ├── draft/                # rules.ts(번갈아·중복·상한), quality-check.ts, generate.ts(생성 루프), store.ts(SQLite 저장소 어댑터)
+│   ├── draft/                # rules.ts(번갈아·중복·상한), quality-check.ts, generate.ts(생성 루프), store.ts(SQLite 저장소 어댑터), (1.7) cross-check.ts·facts.ts(순수)
 │   ├── sources/              # ProductSource 인터페이스 + 어댑터: yes24.ts, coupang-link.ts(1.3)
 │   ├── llm/                  # prompt.ts(순수), body-generator.ts(Anthropic 호출·zod 검증), cost.ts, usage.ts
-│   └── publish/              # publisher.ts(인터페이스), orchestrator.ts, handoff.ts, naver.ts(순수 어댑터·HTML 렌더), naver-playwright.ts(브라우저·화면 지식), renderer.ts
+│   └── publish/              # publisher.ts(인터페이스), orchestrator.ts, handoff.ts, naver.ts(순수 어댑터·HTML 렌더), naver-style.ts(1.7 서식 토큰·템플릿·이모지 풀 — 스타일의 유일한 위치), naver-playwright.ts(브라우저·화면 지식), renderer.ts
 └── data/dolsoe.db            # 런타임 생성 (.gitignore)
 ```
 - 순수 로직(번갈아 선택, 중복 제외 필터, 품질 검사, 상태 전이 판정, 렌더링)은 I/O와 분리해 **순수 함수**로 둔다 → 테스트 용이.
@@ -55,6 +55,8 @@ dolsoe/
 - **CAS로 중간 상태(`drafting`·`publishing`)에 진입한 뒤에는 어떤 예외 경로도 그 상태에 남기지 않는다**: 본문 전체를 감싸 예외 시 `failed`(또는 원래 대기 상태)로 되돌리고 알린다. 그래도 죽는 경우를 위해 기동 시 복구(`recoverStuckDrafts`·`recoverStuckPublishing`)를 둔다(1.3 수정 고착·1.4 발행 고착에서 반복 지적).
 - 외부 전송 실패를 `retryable`로 분류할 때는 **상대가 명확히 거절한 경우만** 재시도 가능으로 본다. 네트워크 오류·타임아웃·5xx는 이미 처리됐을 수 있어 자동 재시도 금지(중복 발행·전달 방지, ADR-006).
 - **"올라갔는지 모르는" 결과는 폴백하지 않는다**: 외부에 쓰기를 시도한 뒤 완료를 확인하지 못했으면(저장 버튼 클릭 후 미확인 등) 확정 실패로 바꿔 다음 단계로 내려가지 말고 던져서 `failed` + 사람 확인으로 멈춘다 — 폴백하면 중복 글이 생긴다(1.5 audit M1).
+- **스타일은 `naver-style.ts` 밖에 없다(P3, ADR-011)**: 글자 크기·색·HTML·이모지는 계약·LLM 출력·`draft/`에 두지 않는다. 본문은 의미 단위만 담는다.
+- **"확인됐는가"의 판정은 코드가 한다(ADR-013)**: 필사 문구·스펙처럼 외부에서 찾은 사실은 모델이 후보를 내고 `crossCheck`가 서로 다른 사이트 2곳의 원문 발췌에서 글자 그대로 확인한 것만 쓴다. 모델이 스스로 확인했다고 믿지 않는다. 검사 제외는 출처가 추적되는 구간(사용자 메모, 검증된 인용문)이고 **원본과 글자 그대로 같을 때만**이다(ADR-012).
 - **외부 화면에 넣은 결과는 입력이 아니라 실제 화면에서 검증한다**: 대가성 문구 같은 필수 요소는 입력 문자열이 아니라 에디터에 실제로 들어간 텍스트에서 확인한 뒤에만 저장한다. 외부 호출(브라우저 등) 전체에는 데드라인을 걸어 매달려도 `publishing` 고착·핸들러 블로킹이 없게 한다(`withDeadline`, 1.5 audit M2·M3).
 - 데이터 유실 금지: 초안·사용자 입력 원문(수정 지시·경험 문장)은 어떤 실패에서도 잃지 않는다.
 - 실패는 조용히 묻지 않는다: 생성·발행·인증 실패는 텔레그램으로 알린다(NFR-004). 알림 자체가 실패하면 로그에 남긴다.

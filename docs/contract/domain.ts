@@ -76,6 +76,33 @@ export const EXPERIENCE_CLAIM_PATTERNS: readonly RegExp[] = [
   /몇\s*(달|주|일)\s*(간|동안)?\s*(써|사용)/,
 ];
 
+// ── 글 스타일 상수 (페이즈 1.7, PRD §11, ADR-011~014) ─────────────────
+export const EMOJI_MAX_PER_POST = 8; // REQ-031 글당 이모지 상한(소제목 앞 1개 + 도입·마무리 1~2개)
+export const EXCLAMATIONS_MAX = 3; // REQ-027 느낌표 글당 상한
+export const SENTENCES_PER_PARAGRAPH_MAX = 3; // REQ-027 문단당 문장 상한
+export const TITLE_MAX_CHARS = 30; // REQ-032 제목 길이 상한("25자 안팎" 목표, 모바일 노출 한도 여유)
+export const TAGS_MIN = 3; // REQ-032 태그 개수 범위(목표 5개 내외)
+export const TAGS_MAX = 8;
+export const QUOTE_MAX_CHARS = 100; // REQ-029 필사 문구 길이 상한(1~2문장)
+export const CROSS_CHECK_MIN_SITES = 2; // REQ-028·029 서로 다른 사이트 몇 곳에서 글자 그대로 확인돼야 쓰는가
+export const QUOTE_SEARCH_MAX_USES = 3; // REQ-029 필사 문구 수집 웹검색 상한(비용, NFR-001)
+export const SPEC_SEARCH_MAX_USES = 3; // REQ-028 가전 스펙 수집 웹검색 상한(상품 1개당)
+export const PHOTO_MAX_BYTES = 10 * 1024 * 1024; // REQ-034 받아들이는 사진 크기 상한(텔레그램 압축 사진은 보통 훨씬 작다)
+export const MEDIA_DIR_DEFAULT = "data/media"; // REQ-034 사진 보관 폴더(.gitignore의 /data 아래)
+
+/**
+ * REQ-027·030 문체 위반 패턴(봇이 만든 문장에만 적용). 걸리면 자동 재생성하고, 그래도 남으면 카드에 개수를 표시한다(차단하지 않음, REQ-015와 같은 정책).
+ * 지어낸 후기(EXPERIENCE_CLAIM_PATTERNS)는 기존대로 차단이다. 시작 목록 — 부록 B 골든셋으로 운영하며 승격.
+ */
+export const STYLE_VIOLATION_PATTERNS: readonly RegExp[] = [
+  /더라(고요|구요|고|구)/, // 겪은 일을 말하는 어미
+  /(들어|놓아|펼쳐|꺼내)\s?(갔|봤|보니|봤더니)/,
+  /(울컥|눈물이 났|와닿았|와닿더|마음에 남았)/, // 읽었음을 함의하는 감상(책 L2 경계)
+  /읽으면서/,
+  /저한테 하는 말/,
+  /\d+\s*(주|개월|달|일|시간)\s*(째|동안|간|넘게)?\s*(써|사용|썼|갔|지속)/, // L4: 수치+기간의 사용 주장
+];
+
 // ── 카테고리·소스 ──────────────────────────────────────────────────
 export const CategorySchema = z.enum(["appliance", "book"]); // 생활가전·주방 / 책 추천
 export type Category = z.infer<typeof CategorySchema>;
@@ -113,9 +140,23 @@ export type Product = z.infer<typeof ProductSchema>;
 
 // ── 초안 본문 (플랫폼 중립, ADR-005) ────────────────────────────────
 // 구매 링크·대가성 문구는 여기 없다: 렌더러가 products와 DISCLOSURE_TEXTS로 붙인다(REQ-010).
+/** REQ-029 필사 문구. text는 출처 텍스트에 글자 그대로 있어야 하고(ADR-013), 모델 기억에서 꺼낸 문장은 쓰지 않는다. */
+export const QuoteSchema = z.object({
+  text: z.string().min(1),
+  attribution: z.string().min(1), // "— 『책 제목』, 저자" / "— 이름(직함)" / "— 『책 제목』 소개글 중"
+  origin: z.enum(["user", "web", "intro"]), // 사용자 문구 / 웹 2곳 교차 확인 / 소개문
+});
+export type Quote = z.infer<typeof QuoteSchema>;
+
+/**
+ * REQ-032 제목·태그. keyword는 제목 맨 앞에 와야 하는 확실한 단어(상품명·책 제목 등, ADR-011).
+ * 스타일(글자 크기·색·이모지·HTML)은 본문에 없다 — 어댑터의 렌더러만 안다(P3, ADR-011). 아래 새 필드는 옛 저장 행을 깨지 않도록 optional이다.
+ */
 export const ApplianceBodySchema = z.object({
   category: z.literal("appliance"),
   title: z.string().min(1), // G1: "20평대 공기청정기 3종 비교"
+  keyword: z.string().min(1).optional(), // REQ-032
+  intro: z.string().min(1).optional(), // 도입 한두 줄(REQ-027)
   verdict: z.string().min(1), // 한 줄 결론
   comparison: z.object({
     headers: z.array(z.string().min(1)).min(2),
@@ -127,9 +168,12 @@ export const ApplianceBodySchema = z.object({
         forWhom: z.string().min(1),
         productExternalId: z.string().min(1),
         reason: z.string().min(1),
+        factIds: z.array(z.string().min(1)).optional(), // REQ-028 이 판단이 기대는 근거 팩트 ID(코드가 계산한 것만 유효)
       }),
     )
     .min(1),
+  closing: z.string().min(1).optional(), // 마무리 한 줄(REQ-027)
+  tags: z.array(z.string().min(1)).optional(), // REQ-032
   experienceLine: z.string().nullable(), // REQ-011 사용자가 준 문장만. 봇이 창작 금지
 });
 export type ApplianceBody = z.infer<typeof ApplianceBodySchema>;
@@ -138,13 +182,26 @@ export type ApplianceBody = z.infer<typeof ApplianceBodySchema>;
 export const BookBodySchema = z.object({
   category: z.literal("book"),
   title: z.string().min(1), // B3: 책 제목이 드러나는 제목
+  keyword: z.string().min(1).optional(), // REQ-032
+  intro: z.string().min(1).optional(), // 도입: 독자 상황 프레임(L1, REQ-027)
   synopsis: z.string().min(1), // 줄거리(소개문 근거, 원문 복사 금지)
   mood: z.string().min(1), // 분위기·읽는 느낌(후기 근거 의역)
   recommendedFor: z.string().min(1), // 이런 사람에게
-  highlights: z.string().min(1), // 인상 깊은 대목(후기·소개문에서 확인된 것만 의역, 직접 인용 금지)
+  highlights: z.string().min(1), // 인상 깊은 대목(후기·소개문에서 확인된 것만 의역, 직접 인용 금지). quote가 있으면 "이 문장이 필사하기 좋은 이유" 설명으로 쓴다(ADR-011)
+  quote: QuoteSchema.nullable().optional(), // REQ-029 필사 문구(없으면 코너 생략)
+  closing: z.string().min(1).optional(), // 마무리 한 줄(REQ-027)
+  tags: z.array(z.string().min(1)).optional(), // REQ-032
   experienceLine: z.string().nullable(),
 });
 export type BookBody = z.infer<typeof BookBodySchema>;
+
+/** REQ-028 코드가 상품 스펙에서 계산한 근거 팩트. 모델은 이것만 근거로 판단 문장을 쓰고 recommendations[].factIds로 가리킨다(ADR-013). */
+export const ComparisonFactSchema = z.object({
+  id: z.string().min(1), // 예: "capacity_max", "price_per_liter_min"
+  text: z.string().min(1), // "용량이 가장 큰 제품은 C(12L)"
+  productExternalId: z.string().min(1).nullable(),
+});
+export type ComparisonFact = z.infer<typeof ComparisonFactSchema>;
 
 export const DraftBodySchema = z.discriminatedUnion("category", [ApplianceBodySchema, BookBodySchema]);
 export type DraftBody = z.infer<typeof DraftBodySchema>;
@@ -153,6 +210,7 @@ export type DraftBody = z.infer<typeof DraftBodySchema>;
 export const QualityReportSchema = z.object({
   bannedPhrasesFound: z.array(z.string()),
   hasExperienceLine: z.boolean(),
+  styleIssues: z.array(z.string()).optional(), // REQ-030 문체 위반(STYLE_VIOLATION_PATTERNS 등). 옛 저장 행엔 없다
 });
 export type QualityReport = z.infer<typeof QualityReportSchema>;
 
@@ -193,6 +251,14 @@ export const DraftSchema = z.object({
   quality: QualityReportSchema.nullable(),
   /** REQ-016 후기 근거 출처 URL(발행 본문에는 넣지 않는다). 책 초안만 의미 있고, 없으면 생략. */
   reviewSources: z.array(z.string().url()).optional(),
+  /** REQ-028·029 웹 교차 확인에 쓴 출처 URL(초안 DB에만, 본문·카드에는 개수만, ADR-013). */
+  quoteSources: z.array(z.string().url()).optional(),
+  specSources: z.array(z.string().url()).optional(),
+  /** REQ-034 내 한 컷 사진(1장). 파일은 MEDIA_DIR에 있고 DB엔 경로만(ADR-014). */
+  photo: z
+    .object({ filePath: z.string().min(1), mime: z.enum(["image/jpeg", "image/png"]), bytes: z.number().int().positive() })
+    .nullable()
+    .optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -237,8 +303,18 @@ export const BotCallbackSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("publish"), draftId: z.number().int().positive() }),
   z.object({ action: z.literal("revise"), draftId: z.number().int().positive() }),
   z.object({ action: z.literal("discard"), draftId: z.number().int().positive() }),
+  // REQ-034: 보낸 사진·메모를 어느 초안에 붙일지 고르는 버튼 / 취소
+  z.object({ action: z.literal("attach"), draftId: z.number().int().positive() }),
+  z.object({ action: z.literal("attach_cancel") }),
 ]);
 export type BotCallback = z.infer<typeof BotCallbackSchema>;
+
+/** REQ-034 초안을 고르기 전까지 kv `pending_media`에 보관하는 사진·메모(한 번에 하나, 새로 오면 교체). */
+export const PendingMediaSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("photo"), filePath: z.string().min(1), mime: z.enum(["image/jpeg", "image/png"]), bytes: z.number().int().positive() }),
+  z.object({ kind: z.literal("memo"), text: z.string().min(1) }),
+]);
+export type PendingMedia = z.infer<typeof PendingMediaSchema>;
 
 /** 링크 모드 메시지: 링크 + 선택적 메모(REQ-006). */
 export const LinkRequestSchema = z.object({
