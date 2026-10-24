@@ -117,7 +117,7 @@ export async function publishDraft(deps: PublishDeps, id: number): Promise<Publi
   if (draft === null || draft.body === null) return "ignored";
   if (draft.status !== "awaiting_approval" && draft.status !== "failed") return "ignored";
 
-  const posts = deps.publishers.map((publisher) => ({ publisher, post: { draftId: id, title: draft.body!.title, content: publisher.render(draft), mustContain: requiredDisclosures(draft.products) } }));
+  const posts = deps.publishers.map((publisher) => ({ publisher, post: { draftId: id, title: draft.body!.title, content: publisher.render(draft), mustContain: requiredDisclosures(draft.products), ...(draft.photo == null ? {} : { photoPath: draft.photo.filePath }) } }));
   if (posts.some(({ post }) => missingDisclosures(post.content, draft.products).length > 0)) {
     await alert(() => deps.notify(`#${id} 초안에 대가성 문구가 없어 발행을 막았어요. 초안은 그대로 남아 있어요.`));
     return "blocked";

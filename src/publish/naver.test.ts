@@ -4,8 +4,8 @@ import type { Draft, DraftBody, Product } from "@contract/domain.js";
 import { DISCLOSURE_TEXTS, EMOJI_MAX_PER_POST } from "@contract/domain.js";
 
 import { missingDisclosures, requiredDisclosures } from "./disclosure.js";
-import { APPLIANCE_THEME_ACCENT, BOOK_THEME_ACCENT, HEADING_SIZE_PX } from "./naver-style.js";
-import { createNaverDraftPublisher, missingTexts, renderNaverHtml, type NaverEditorDriver } from "./naver.js";
+import { APPLIANCE_THEME_ACCENT, BOOK_THEME_ACCENT, HEADING_SIZE_PX, PHOTO_SLOT_MARKER } from "./naver-style.js";
+import { createNaverDraftPublisher, missingTexts, renderNaverHtml, splitAtPhotoSlot, type NaverEditorDriver } from "./naver.js";
 
 const product = (id: string, over: Partial<Product> = {}): Product => ({
   externalId: id,
@@ -207,6 +207,41 @@ const fakeDriver = (result: Awaited<ReturnType<NaverEditorDriver["saveDraft"]>> 
   return { saveDraft };
 };
 
+describe("사진 자리 (REQ-035)", () => {
+  const photo = { filePath: "/m/a.jpg", mime: "image/jpeg" as const, bytes: 10 };
+
+  it("[REQ-035] 사진이 있는 초안의 HTML에는 '내 한 컷' 소제목 아래에 사진 자리가 한 번 들어가고, 없으면 자리도 없다", () => {
+    const withPhoto = renderNaverHtml({ ...draft(bookBody({ experienceLine: "출퇴근길에 읽었어요" }), [product("1")]), photo });
+    expect(withPhoto.split(PHOTO_SLOT_MARKER)).toHaveLength(2);
+    expect(withPhoto.indexOf("내 한 컷")).toBeLessThan(withPhoto.indexOf(PHOTO_SLOT_MARKER));
+    expect(withPhoto.indexOf(PHOTO_SLOT_MARKER)).toBeLessThan(withPhoto.indexOf("출퇴근길에 읽었어요"));
+    expect(renderNaverHtml(draft(bookBody(), [product("1")]))).not.toContain(PHOTO_SLOT_MARKER);
+  });
+
+  it("[REQ-035] 메모 없이 사진만 있어도 '내 한 컷' 자리가 생긴다", () => {
+    expect(renderNaverHtml({ ...draft(bookBody(), [product("1")]), photo })).toContain(PHOTO_SLOT_MARKER);
+  });
+
+  it("[REQ-035] 자리에서 앞·뒤로 나누면 이어 붙였을 때 원문과 같고, 자리가 없으면 null이다", () => {
+    const html = renderNaverHtml({ ...draft(bookBody(), [product("1")]), photo });
+    const parts = splitAtPhotoSlot(html)!;
+    expect(parts.before + PHOTO_SLOT_MARKER + parts.after).toBe(html);
+    expect(splitAtPhotoSlot("<p>없음</p>")).toBeNull();
+  });
+
+  it("[REQ-035] 임시저장 어댑터는 사진 경로를 드라이버에 그대로 넘긴다", async () => {
+    const driver = fakeDriver({ ok: true });
+    await createNaverDraftPublisher({ driver }).publish({ draftId: 7, title: "제목", content: "<p>본문</p>", mustContain: [], photoPath: "/m/a.jpg" });
+    expect(driver.saveDraft).toHaveBeenCalledWith(expect.objectContaining({ photoPath: "/m/a.jpg" }));
+  });
+
+  it("[REQ-035][EDGE-016] 사진 업로드를 확인 못 해 저장 전 실패면 폴백 대상 실패로 보고한다(사진 없이 저장하지 않음)", async () => {
+    const publisher = createNaverDraftPublisher({ driver: fakeDriver({ ok: false, reason: "editor_unavailable", detail: "사진 업로드를 확인하지 못해 저장하지 않았어요" }) });
+    const result = await publisher.publish({ draftId: 7, title: "제목", content: "x", mustContain: [], photoPath: "/m/a.jpg" });
+    expect(result).toMatchObject({ ok: false, mode: "draft", retryable: false });
+  });
+});
+
 describe("createNaverDraftPublisher — 임시저장 어댑터", () => {
   const post = { draftId: 7, title: "제목", content: "<p>본문</p>", mustContain: ["대가성 문구"] };
 
@@ -215,7 +250,7 @@ describe("createNaverDraftPublisher — 임시저장 어댑터", () => {
     const publisher = createNaverDraftPublisher({ driver });
     expect(publisher.mode).toBe("draft");
     await expect(publisher.publish(post)).resolves.toEqual({ ok: true, mode: "draft", url: null, externalId: null });
-    expect(driver.saveDraft).toHaveBeenCalledWith({ title: "제목", html: "<p>본문</p>", mustContain: ["대가성 문구"] });
+    expect(driver.saveDraft).toHaveBeenCalledWith({ title: "제목", html: "<p>본문</p>", mustContain: ["대가성 문구"] }); // 사진 없으면 photoPath 키도 없다
   });
 
   it("[REQ-013] 로그인 세션이 만료되면 authExpired 실패로 보고한다(재시도 없이 다음 단계로 내려가도록)", async () => {

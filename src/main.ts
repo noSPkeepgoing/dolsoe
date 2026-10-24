@@ -58,7 +58,7 @@ async function main(): Promise<void> {
     config.NAVER_PROFILE_DIR === undefined ? [] : [createNaverDraftPublisher({ driver: createPlaywrightNaverDriver({ profileDir: config.NAVER_PROFILE_DIR }) })];
   const publish: PublishDeps = {
     store: { ...approvalStore, ...createPublishStore(db, now) },
-    publishers: [...naverDraft, createHandoffPublisher({ sendChunk: messenger.sendChunk })],
+    publishers: [...naverDraft, createHandoffPublisher({ sendChunk: messenger.sendChunk, sendPhoto: messenger.sendPhoto })],
     notify: messenger.notify,
     notifyFailure: messenger.notifyFailure,
   };

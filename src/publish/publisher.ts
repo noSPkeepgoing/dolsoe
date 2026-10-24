@@ -7,6 +7,8 @@ export interface Post {
   content: string;
   /** 발행 결과 화면에 반드시 있어야 하는 문구(대가성 문구, REQ-010). 입력 문자열이 아니라 실제로 만들어진 화면에서 확인하는 발행기가 쓴다. */
   mustContain: readonly string[];
+  /** REQ-035 내 한 컷 사진 파일 경로(없으면 생략). 발행부는 플랫폼을 모른 채 넘기기만 하고, 쓰는 방법은 각 어댑터가 정한다. */
+  photoPath?: string;
 }
 
 /**

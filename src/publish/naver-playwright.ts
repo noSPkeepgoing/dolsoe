@@ -1,7 +1,9 @@
+import fs from "node:fs/promises";
+
 import { chromium, type BrowserContext, type Frame, type Page } from "playwright";
 
 import { TIMED_OUT, withDeadline } from "./deadline.js";
-import { missingTexts, type NaverEditorDriver, type NaverEditorOutcome } from "./naver.js";
+import { missingTexts, splitAtPhotoSlot, type NaverEditorDriver, type NaverEditorOutcome } from "./naver.js";
 
 // 네이버 블로그 에디터 화면 지식(P3: 이 파일 밖으로 새지 않는다). 화면이 바뀌면 여기 선택자만 고친다 — 못 찾으면 editor_unavailable로 보고돼 ④ 텔레그램 전달로 내려간다.
 const WRITE_URL = "https://blog.naver.com/GoBlogWrite.naver";
@@ -20,9 +22,13 @@ const EDITOR_LOAD_TIMEOUT_MS = 30_000;
 const SETTLE_MS = 2_000;
 const SAVE_CONFIRM_TIMEOUT_MS = 15_000;
 const POLL_MS = 500;
+const PHOTO_SELECTOR = ".se-component.se-image img";
+const PHOTO_UPLOAD_TIMEOUT_MS = 25_000;
 const TYPE_DELAY_MS = 10;
 /** 한 번의 임시저장 전체 상한. 정상은 10초대이고, 단계별 대기 합(최악 약 50초)에 여유를 둔다. 넘기면 브라우저를 닫고 보고한다(M3). */
 const DRAFT_DEADLINE_MS = 90_000;
+/** 사진이 있으면 업로드 대기(최대 PHOTO_UPLOAD_TIMEOUT_MS)가 더해지므로 그만큼 늘린다. */
+const PHOTO_DEADLINE_EXTRA_MS = 40_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -40,6 +46,45 @@ async function readSavedCount(editor: Frame): Promise<number | null> {
     return Number.isNaN(value) ? null : value;
   }, SAVE_BUTTON_TEXT);
   return count;
+}
+
+/** 클립보드에 HTML을 담아 커서 위치에 붙여넣는다. */
+async function pasteHtml(page: Page, html: string): Promise<void> {
+  await page.evaluate(async (value) => {
+    const plain = new Blob([value.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')], { type: "text/plain" });
+    await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([value], { type: "text/html" }), "text/plain": plain })]);
+  }, html);
+  await page.keyboard.press("ControlOrMeta+V");
+}
+
+/**
+ * REQ-035: 사진을 클립보드 `image/png`로 붙여넣고, 에디터에 이미지가 늘고 그 src가 `data:`가 아닐 때(=네이버 서버에 올라감)만 성공으로 본다.
+ * 확인하지 못하면 false — 호출 쪽이 사진 없이 저장하지 않고 저장 전 실패로 돌린다(ADR-006).
+ */
+async function pastePhoto(page: Page, editor: Frame, photoPath: string): Promise<boolean> {
+  const countImages = (): Promise<{ total: number; uploaded: number }> =>
+    editor.evaluate((selector) => {
+      const images = [...document.querySelectorAll(selector)];
+      return { total: images.length, uploaded: images.filter((img) => !(img.getAttribute("src") ?? "").startsWith("data:") && (img.getAttribute("src") ?? "") !== "").length };
+    }, PHOTO_SELECTOR);
+  const before = await countImages();
+  const base64 = (await fs.readFile(photoPath)).toString("base64");
+  // ClipboardItem은 image/png만 안정적으로 받으므로 JPEG는 페이지 안에서 PNG로 바꿔 넣는다.
+  await page.evaluate(async (data) => {
+    const source = new Blob([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))]);
+    const bitmap = await createImageBitmap(source);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": await canvas.convertToBlob({ type: "image/png" }) })]);
+  }, base64);
+  await page.keyboard.press("ControlOrMeta+V");
+  const deadline = Date.now() + PHOTO_UPLOAD_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const after = await countImages();
+    if (after.total > before.total && after.uploaded > before.uploaded) return true;
+    await sleep(POLL_MS);
+  }
+  return false;
 }
 
 async function findEditorFrame(page: Page): Promise<Frame | null> {
@@ -81,11 +126,18 @@ async function fillAndSave(context: BrowserContext, input: DraftInput, state: { 
   await page.keyboard.type(input.title, { delay: TYPE_DELAY_MS });
 
   await editor.locator(BODY_PARAGRAPH_SELECTOR).first().click();
-  await page.evaluate(async (html) => {
-    const plain = new Blob([html.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')], { type: "text/plain" });
-    await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": plain })]);
-  }, input.html);
-  await page.keyboard.press("ControlOrMeta+V");
+  if (input.photoPath === undefined) {
+    await pasteHtml(page, input.html);
+  } else {
+    // 사진 자리에서 본문을 둘로 나눠 앞 → 사진 → 뒤 순서로 붙인다(에디터가 HTML 속 data: 이미지를 버리므로).
+    const parts = splitAtPhotoSlot(input.html);
+    if (parts === null) return unavailable("사진 자리를 본문에서 찾지 못했어요");
+    await pasteHtml(page, parts.before);
+    await sleep(SETTLE_MS);
+    if (!(await pastePhoto(page, editor, input.photoPath))) return unavailable("사진 업로드를 확인하지 못해 저장하지 않았어요");
+    await sleep(SETTLE_MS);
+    await pasteHtml(page, parts.after);
+  }
   await sleep(SETTLE_MS);
 
   // 저장 전에 "화면에 실제로 들어간 것"을 확인한다(입력 문자열이 아니라): 제목이 제목칸에, 대가성 문구 등 필수 문구가 에디터 전체에 있어야 한다.
@@ -119,6 +171,7 @@ export function createPlaywrightNaverDriver(deps: { profileDir: string }): Naver
   const run = (input: DraftInput): Promise<NaverEditorOutcome> => {
     const task = async (): Promise<NaverEditorOutcome> => {
       const state = { clicked: false, timedOut: false };
+      const deadlineMs = DRAFT_DEADLINE_MS + (input.photoPath === undefined ? 0 : PHOTO_DEADLINE_EXTRA_MS);
       let context: BrowserContext | undefined;
       const work = (async (): Promise<NaverEditorOutcome> => {
         try {
@@ -135,12 +188,12 @@ export function createPlaywrightNaverDriver(deps: { profileDir: string }): Naver
           await context.close().catch(() => {});
         }
       })();
-      const outcome = await withDeadline(work, DRAFT_DEADLINE_MS);
+      const outcome = await withDeadline(work, deadlineMs);
       if (outcome !== TIMED_OUT) return outcome;
       // 멈춘 호출을 끊는다: 열려 있으면 닫고, 아직 여는 중이면 열린 직후 work가 스스로 닫는다(state.timedOut).
       state.timedOut = true;
       await context?.close().catch(() => {});
-      const detail = `${DRAFT_DEADLINE_MS / 1000}초 안에 끝나지 않아 중단했어요`;
+      const detail = `${deadlineMs / 1000}초 안에 끝나지 않아 중단했어요`;
       return state.clicked ? { ok: false, reason: "save_unconfirmed", detail: `${detail}. 네이버 임시저장함을 확인해 주세요` } : unavailable(detail);
     };
     const next = queue.then(task, task);

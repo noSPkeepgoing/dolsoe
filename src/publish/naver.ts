@@ -1,6 +1,6 @@
 import type { PublishResult } from "@contract/domain.js";
 
-import { renderStyledHtml } from "./naver-style.js";
+import { PHOTO_SLOT_MARKER, renderStyledHtml } from "./naver-style.js";
 import type { Post, Publisher } from "./publisher.js";
 
 /** 네이버 블로그 에디터를 다루는 부분(브라우저)의 경계. 선택자·URL 같은 네이버 화면 지식은 이 인터페이스 뒤(naver-playwright.ts)에만 둔다(P3). */
@@ -15,7 +15,7 @@ export type NaverEditorOutcome =
 
 export interface NaverEditorDriver {
   /** 새 글에 제목·본문(HTML)을 넣고 임시저장만 한다. 발행은 절대 하지 않는다. 결과를 알 수 없게 죽으면 던진다. */
-  saveDraft(input: { title: string; html: string; mustContain: readonly string[] }): Promise<NaverEditorOutcome>;
+  saveDraft(input: { title: string; html: string; mustContain: readonly string[]; photoPath?: string }): Promise<NaverEditorOutcome>;
 }
 
 const collapseSpaces = (text: string): string => text.replace(/\s+/g, " ").trim();
@@ -29,6 +29,13 @@ export function missingTexts(editorText: string, required: readonly string[]): s
 /** 네이버 에디터에 붙여넣을 최종 본문 HTML. 서식은 naver-style.ts가 입힌다(P3, ADR-011). */
 export const renderNaverHtml = renderStyledHtml;
 
+/** REQ-035: 본문 HTML을 사진 자리(`PHOTO_SLOT_MARKER`)에서 앞·뒤로 나눈다. 자리가 없으면 null — 사진을 어디에 넣을지 알 수 없으니 호출 쪽이 저장 전에 실패시킨다. */
+export function splitAtPhotoSlot(html: string): { before: string; after: string } | null {
+  const index = html.indexOf(PHOTO_SLOT_MARKER);
+  if (index === -1) return null;
+  return { before: html.slice(0, index), after: html.slice(index + PHOTO_SLOT_MARKER.length) };
+}
+
 /**
  * 사다리 ③(ADR-005 개정): 브라우저로 네이버 에디터에 글을 채우고 임시저장까지만 한다. 공개는 사람이 한다.
  * 저장을 누르기 전에 명확히 막힌 경우(세션 만료·에디터 못 찾음)는 retryable=false 실패로 돌려 ④ 텔레그램 전달로 내려가게 한다.
@@ -40,7 +47,12 @@ export function createNaverDraftPublisher(deps: { driver: NaverEditorDriver }): 
     mode: "draft",
     render: renderNaverHtml,
     async publish(post: Post): Promise<PublishResult> {
-      const outcome = await deps.driver.saveDraft({ title: post.title, html: post.content, mustContain: post.mustContain });
+      const outcome = await deps.driver.saveDraft({
+        title: post.title,
+        html: post.content,
+        mustContain: post.mustContain,
+        ...(post.photoPath === undefined ? {} : { photoPath: post.photoPath }),
+      });
       if (outcome.ok) return { ok: true, mode: "draft", url: null, externalId: null };
       if (outcome.reason === "save_unconfirmed") throw new Error(outcome.detail);
       const authExpired = outcome.reason === "auth_expired";

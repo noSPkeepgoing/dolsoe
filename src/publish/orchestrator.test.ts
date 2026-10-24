@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { DraftBody, Product, PublishMode, PublishResult } from "@contract/domain.js";
 import { DISCLOSURE_TEXTS, PUBLISH_MAX_RETRIES } from "@contract/domain.js";
 
-import { getDraft, insertDraft, listPublishAttempts, openDb } from "../db.js";
+import { getDraft, insertDraft, listPublishAttempts, openDb, setDraftPhoto } from "../db.js";
 import { createApprovalStore, createPublishStore } from "../draft/store.js";
 
 import { recoverStuckPublishing, publishDraft, type PublishDeps } from "./orchestrator.js";
@@ -93,6 +93,19 @@ describe("publishDraft — 성공 경로", () => {
     const post = manual.publish.mock.calls[0]![0];
     expect(post).toMatchObject({ draftId: draft.id, title: "원본 제목" });
     expect(post.content).toContain(DISCLOSURE_TEXTS.yes24);
+  });
+
+  it("[REQ-035] 사진이 붙은 초안이면 발행기에 사진 경로가 넘어가고, 없으면 키 자체가 없다", async () => {
+    const withPhoto = fakePublisher("manual", []);
+    const a = setup([withPhoto]);
+    setDraftPhoto(a.db, a.draft.id, { filePath: "/m/a.jpg", mime: "image/jpeg", bytes: 10 }, NOW);
+    await publishDraft(a.deps, a.draft.id);
+    expect(withPhoto.publish.mock.calls[0]![0].photoPath).toBe("/m/a.jpg");
+
+    const plain = fakePublisher("manual", []);
+    const b = setup([plain]);
+    await publishDraft(b.deps, b.draft.id);
+    expect("photoPath" in plain.publish.mock.calls[0]![0]).toBe(false);
   });
 
   it("[REQ-010] 발행기에는 화면에서 반드시 확인해야 할 대가성 문구 목록(mustContain)도 넘어간다", async () => {

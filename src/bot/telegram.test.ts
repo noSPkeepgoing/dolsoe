@@ -9,7 +9,8 @@ const OWNER = 111;
 /** 실제 네트워크 없이 sendMessage 호출만 기록하는 가짜 API. */
 const fakeApi = () => {
   const sendMessage = vi.fn(async () => ({}));
-  return { sendMessage, api: { sendMessage } as unknown as Pick<Api, "sendMessage"> };
+  const sendPhoto = vi.fn<(chatId: number, photo: unknown) => Promise<object>>(async () => ({}));
+  return { sendMessage, sendPhoto, api: { sendMessage, sendPhoto } as unknown as Pick<Api, "sendMessage" | "sendPhoto"> };
 };
 
 const draft: Draft = {
@@ -35,6 +36,13 @@ describe("createMessenger", () => {
     expect(chatId).toBe(OWNER);
     expect(text).toContain("초안 #5");
     expect(options.reply_markup.inline_keyboard.flat().map((b) => b.text)).toEqual(["발행", "수정", "폐기"]);
+  });
+
+  it("[REQ-035] 사진은 소유자 채팅으로 보낸다", async () => {
+    const { api, sendPhoto } = fakeApi();
+    await createMessenger(api, 111).sendPhoto("/m/a.jpg");
+    expect(sendPhoto).toHaveBeenCalledTimes(1);
+    expect(sendPhoto.mock.calls[0]![0]).toBe(111);
   });
 
   it("[REQ-012] 핸드오프용 sendChunk는 한도 분할 없이 소유자 채팅으로 한 통만 보낸다", async () => {

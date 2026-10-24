@@ -1,5 +1,5 @@
 import type { Api } from "grammy";
-import { InlineKeyboard } from "grammy";
+import { InlineKeyboard, InputFile } from "grammy";
 
 import type { BotCallback, Draft, PendingMedia } from "@contract/domain.js";
 import { TELEGRAM_MAX_MESSAGE_CHARS } from "@contract/domain.js";
@@ -7,7 +7,7 @@ import { TELEGRAM_MAX_MESSAGE_CHARS } from "@contract/domain.js";
 import { formatCard, formatFailureButtons, splitMessage } from "./card.js";
 
 /** 소유자 채팅으로 보내는 전달기. 초안 카드·완성 본문·알림이 모두 여기를 지난다(한도 분할도 한 곳에서). */
-export function createMessenger(api: Pick<Api, "sendMessage">, chatId: number) {
+export function createMessenger(api: Pick<Api, "sendMessage" | "sendPhoto">, chatId: number) {
   const sendText = async (text: string): Promise<void> => {
     for (const chunk of splitMessage(text, TELEGRAM_MAX_MESSAGE_CHARS)) await api.sendMessage(chatId, chunk);
   };
@@ -32,6 +32,10 @@ export function createMessenger(api: Pick<Api, "sendMessage">, chatId: number) {
     /** 한도 분할 없이 한 통만 보낸다. 핸드오프 발행기가 몇 통까지 나갔는지 알아야 해서(REQ-013) 따로 노출한다. */
     sendChunk: async (text: string): Promise<void> => {
       await api.sendMessage(chatId, text);
+    },
+    /** REQ-035: ④ 전달본과 함께 내 한 컷 사진을 보낸다. */
+    sendPhoto: async (filePath: string): Promise<void> => {
+      await api.sendPhoto(chatId, new InputFile(filePath));
     },
     /** REQ-013: 발행 실패 알림. `다시 시도 / 폐기` 버튼을 붙여 failed 초안을 사람이 이어받게 한다. */
     async notifyFailure(draftId: number, text: string): Promise<void> {

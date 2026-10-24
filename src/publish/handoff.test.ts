@@ -31,6 +31,21 @@ describe("createHandoffPublisher", () => {
     expect(publisher.render(draft)).toContain(DISCLOSURE_TEXTS.yes24);
   });
 
+  it("[REQ-035] 사진이 있으면 본문을 보낸 뒤 사진을 함께 보낸다", async () => {
+    const order: string[] = [];
+    const publisher = createHandoffPublisher({ sendChunk: async () => void order.push("text"), sendPhoto: async (p) => void order.push(`photo:${p}`) });
+    const result = await publisher.publish({ ...post("본문"), photoPath: "/m/a.jpg" });
+    expect(order).toEqual(["text", "photo:/m/a.jpg"]);
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it("[REQ-035] 사진만 실패하면 본문 중복을 막으려 재시도 불가로 알린다", async () => {
+    const publisher = createHandoffPublisher({ sendChunk: async () => {}, sendPhoto: async () => { throw new Error("파일 없음"); } });
+    const result = await publisher.publish({ ...post("본문"), photoPath: "/m/a.jpg" });
+    expect(result).toMatchObject({ ok: false, retryable: false });
+    expect(result.ok === false && result.reason).toContain("본문은 전달됐지만");
+  });
+
   it("[REQ-012] 본문이 한도를 넘으면 여러 통으로 나눠 보내고 성공(manual)을 돌려준다", async () => {
     const sendChunk = vi.fn(async () => {});
     const content = Array.from({ length: 400 }, (_, i) => `줄 ${i} ${"가".repeat(30)}`).join("\n");

@@ -180,6 +180,12 @@ function applianceSections(kit: StyleKit, body: Extract<DraftBody, { category: "
   return sections;
 }
 
+/**
+ * REQ-035: 내 한 컷 사진이 들어갈 자리. HTML 주석이라 붙여넣어도 보이지 않고, 에디터 드라이버가 이 지점에서 HTML을 둘로 나눠
+ * 앞부분 → 사진 → 뒷부분 순서로 붙인다(에디터가 HTML 속 `data:` 이미지를 버리는 제약 우회, ADR-014).
+ */
+export const PHOTO_SLOT_MARKER = "<!--dolsoe:photo-->";
+
 /** 네이버 에디터에 붙여넣을 최종 본문 HTML(제목은 에디터 제목칸에 따로 들어간다). 대가성 문구(REQ-010)·가격 기준일·경험 한 줄(REQ-011) 규칙은 텍스트 렌더러와 같다. */
 export function renderStyledHtml(draft: Draft): string {
   if (draft.body === null) throw new Error(`draft #${draft.id} has no body to render`);
@@ -189,7 +195,10 @@ export function renderStyledHtml(draft: Draft): string {
   const sections = body.category === "book" ? bookSections(kit, body, draft.products) : applianceSections(kit, body, draft.products);
 
   const experience = (body.experienceLine ?? "").trim();
-  if (experience.length > 0) sections.push([kit.heading("내 한 컷"), kit.paragraph(experience)]);
+  const hasPhoto = draft.photo != null;
+  if (experience.length > 0 || hasPhoto) {
+    sections.push([kit.heading("내 한 컷"), ...(hasPhoto ? [PHOTO_SLOT_MARKER] : []), ...(experience.length > 0 ? [kit.paragraph(experience)] : [])]);
+  }
   // 책의 마무리는 구매 링크 앞 문단이다(가전의 마무리는 총평 줄로 이미 들어갔다).
   const bookClosing = body.category === "book" && body.closing !== undefined ? [kit.emojiParagraph(body.closing), kit.spacer()] : [];
 
