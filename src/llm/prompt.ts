@@ -1,4 +1,4 @@
-import { BANNED_PHRASES, EXCLAMATIONS_MAX, SENTENCES_PER_PARAGRAPH_MAX } from "@contract/domain.js";
+import { BANNED_PHRASES, EXCLAMATIONS_MAX, SENTENCES_PER_PARAGRAPH_MAX, TAGS_MAX, TAGS_MIN, TITLE_MAX_CHARS } from "@contract/domain.js";
 
 import { expectedExperienceLine, type GenerateBodyInput } from "../draft/generate.js";
 
@@ -18,7 +18,10 @@ const commonRules = (experienceLine: string | null): string => `당신은 한국
 7. 다음 표현은 쓰지 않습니다: ${BANNED_PHRASES.map((phrase) => `"${phrase}"`).join(", ")}. 상투적인 도입부·맺음말 없이 바로 핵심을 씁니다.
 8. 한국어 해요체("~예요", "~해요")로 씁니다. 간결하고 구체적으로 씁니다.
 9. 문체 한도: 문단당 ${SENTENCES_PER_PARAGRAPH_MAX}문장 이하, 느낌표는 글 전체에서 ${EXCLAMATIONS_MAX}개 이하, 초성 표현(ㅋㅋ·ㅠㅠ)은 쓰지 않습니다.
-10. 겪은 일·지난 일을 말하는 표현은 쓰지 않습니다("~더라고요/~더라구요", "써보니", "놓아보니", "들어갔어요", "펼쳤어요" 등). 수치+기간의 사용 주장("3주 썼는데")과 데이터에 없는 성능 판단("소음이 작아요", "오래 써도 튼튼해요")도 쓰지 않습니다. 허용되는 것은 독자 상황 프레임, 취향·가치("저는 이런 결의 책이 좋아요"), 가정형·추측("~할 것 같아요")입니다.`;
+10. 겪은 일·지난 일을 말하는 표현은 쓰지 않습니다("~더라고요/~더라구요", "써보니", "놓아보니", "들어갔어요", "펼쳤어요" 등). 수치+기간의 사용 주장("3주 썼는데")과 데이터에 없는 성능 판단("소음이 작아요", "오래 써도 튼튼해요")도 쓰지 않습니다. 허용되는 것은 독자 상황 프레임, 취향·가치("저는 이런 결의 책이 좋아요"), 가정형·추측("~할 것 같아요")입니다.
+11. keyword: 상품명·책 제목·저자·카테고리 중 데이터에 있는 확실한 단어 하나입니다. title은 keyword로 시작하고 keyword는 title에 한 번만 쓰며, 25자 안팎(최대 ${TITLE_MAX_CHARS}자)으로 씁니다. title에 이모지·장식 기호(★ 등)를 쓰지 않습니다.
+12. tags: 관련어 ${TAGS_MIN}~${TAGS_MAX}개(5개 내외)이고 상품명·책 제목·저자·카테고리·주제어를 씁니다. "#"을 붙이지 않고 중복 없이 씁니다. 검색량·유행을 지어내지 않습니다.
+13. intro(도입)는 독자 상황을 짚는 한두 문장, closing(마무리)은 한 줄입니다. 둘 다 위 문체 규칙을 지킵니다. 이모지는 어떤 필드에도 쓰지 않습니다(시스템이 소제목 등에 넣습니다).`;
 
 const APPLIANCE_RULES = `
 [문체 예시] 허용: "리터당 10,750원인 C가 가장 앞서요"(표의 수치에서 계산), "1인가구라면 A(3.5L)가 딱 맞을 것 같아요"(추측 표지), "저라면 식구가 많은 집엔 C를 먼저 권하고 싶어요"(가정형). 금지: "저희집이 좁은데도 쏙 들어가더라구요", "소음이 작아요", "3주 썼는데 배터리가 6시간 갔어요".

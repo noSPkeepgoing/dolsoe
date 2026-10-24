@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
 import type { DraftBody } from "@contract/domain.js";
-import { ApplianceBodySchema, BookBodySchema, LLM_MODEL_BODY } from "@contract/domain.js";
+import { ApplianceBodyGenSchema, BookBodyGenSchema, LLM_MODEL_BODY } from "@contract/domain.js";
 
 import type { BodyGenerator, GenerateBodyInput } from "../draft/generate.js";
 
@@ -44,8 +44,8 @@ export function createBodyGenerator(options: {
 
       const response =
         input.category === "appliance"
-          ? await options.client.messages.parse({ ...request, output_config: { format: zodOutputFormat(ApplianceBodySchema) } })
-          : await options.client.messages.parse({ ...request, output_config: { format: zodOutputFormat(BookBodySchema) } });
+          ? await options.client.messages.parse({ ...request, output_config: { format: zodOutputFormat(ApplianceBodyGenSchema) } })
+          : await options.client.messages.parse({ ...request, output_config: { format: zodOutputFormat(BookBodyGenSchema) } });
 
       options.onUsage({
         model: LLM_MODEL_BODY,

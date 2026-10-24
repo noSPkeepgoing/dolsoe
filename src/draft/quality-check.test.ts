@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import type { ApplianceBody, BookBody, Product } from "@contract/domain.js";
-import { EXCLAMATIONS_MAX, SENTENCES_PER_PARAGRAPH_MAX } from "@contract/domain.js";
+import { EXCLAMATIONS_MAX, SENTENCES_PER_PARAGRAPH_MAX, TAGS_MAX, TAGS_MIN, TITLE_MAX_CHARS } from "@contract/domain.js";
 
-import { checkQuality, findCopyProblems, findExperienceClaims, validateAgainstProducts } from "./quality-check.js";
+import { checkQuality, findCopyProblems, findExperienceClaims, findFormatProblems, validateAgainstProducts } from "./quality-check.js";
 
 const product = (externalId: string): Product => ({
   externalId,
@@ -236,5 +236,41 @@ describe("checkQuality 문체 점검 (부록 B 골든셋)", () => {
     expect(checkQuality(quoted, { trustedQuote: "울컥했던 그날의 기록" }).styleIssues).toEqual([]);
     expect(checkQuality(quoted, { trustedQuote: "다른 문장" }).styleIssues?.length).toBeGreaterThan(0);
     expect(checkQuality(quoted).styleIssues?.length).toBeGreaterThan(0);
+  });
+});
+
+describe("findFormatProblems — 제목·태그·이모지 (REQ-032·031)", () => {
+  const good = (over: Partial<BookBody> = {}): BookBody =>
+    book({ title: "하루키 새 장편 소설 추천", keyword: "하루키", intro: "도입이에요", closing: "마무리예요", tags: ["하루키", "소설추천", "책추천", "장편소설", "독서"], ...over });
+
+  it("[REQ-032] 키워드로 시작하고 길이·태그가 맞는 본문은 문제 없음", () => {
+    expect(findFormatProblems(good())).toEqual([]);
+  });
+
+  it("[REQ-032] 새 필드가 없는 옛 본문(키워드·태그 없음)은 검사하지 않는다(저장 행 호환)", () => {
+    expect(findFormatProblems(book())).toEqual([]);
+  });
+
+  it("[REQ-032] 제목이 키워드로 시작하지 않거나 키워드가 2번 나오면 문제", () => {
+    expect(findFormatProblems(good({ title: "소설 추천 하루키" })).join(" ")).toMatch(/앞/);
+    expect(findFormatProblems(good({ title: "하루키 소설 하루키 추천" })).join(" ")).toMatch(/1번|한 번/);
+  });
+
+  it("[REQ-032] 제목이 길이 상한을 넘거나 이모지·장식 기호가 있으면 문제", () => {
+    expect(findFormatProblems(good({ title: "하루키 " + "가".repeat(TITLE_MAX_CHARS) })).join(" ")).toMatch(/길이|자/);
+    expect(findFormatProblems(good({ title: "하루키 추천 📚" })).join(" ")).toMatch(/이모지|기호/);
+    expect(findFormatProblems(good({ title: "하루키 추천 ★" })).join(" ")).toMatch(/이모지|기호/);
+  });
+
+  it("[REQ-032] 태그 개수 범위·# 접두사·중복을 검사한다", () => {
+    expect(findFormatProblems(good({ tags: ["a", "b"] })).join(" ")).toMatch(new RegExp(`${TAGS_MIN}`));
+    expect(findFormatProblems(good({ tags: Array.from({ length: TAGS_MAX + 1 }, (_, i) => `t${i}`) })).join(" ")).toMatch(new RegExp(`${TAGS_MAX}`));
+    expect(findFormatProblems(good({ tags: ["#하루키", "b", "c"] })).join(" ")).toMatch(/#/);
+    expect(findFormatProblems(good({ tags: ["a", "a", "b"] })).join(" ")).toMatch(/중복/);
+  });
+
+  it("[REQ-031] 본문 필드에 이모지가 있으면 문제(이모지는 렌더러만 넣는다)", () => {
+    expect(findFormatProblems(good({ intro: "안녕하세요 😀" })).join(" ")).toMatch(/이모지/);
+    expect(findFormatProblems(good({ closing: "끝 ✨" })).join(" ")).toMatch(/이모지/);
   });
 });

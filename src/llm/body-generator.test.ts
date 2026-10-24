@@ -43,6 +43,15 @@ describe("createBodyGenerator", () => {
     expect(params.output_config).toBeDefined();
   });
 
+  it("[REQ-032] 구조화 출력 스키마는 도입·마무리·키워드·태그를 필수로 요구한다(저장 스키마는 optional)", async () => {
+    for (const category of ["book", "appliance"] as const) {
+      const { client, parse } = fakeClient({ parsed_output: body, stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } });
+      await createBodyGenerator({ client, onUsage: () => {} }).generateBody({ ...input, category });
+      const format = (parse.mock.calls[0]![0].output_config as { format: { schema: { required: string[] } } }).format;
+      expect(format.schema.required).toEqual(expect.arrayContaining(["keyword", "intro", "closing", "tags"]));
+    }
+  });
+
   it("[ADR-007] Sonnet 5.5가 400으로 거부하는 파라미터(temperature·thinking 끄기·강제 tool_choice·prefill)를 보내지 않는다", async () => {
     const { client, parse } = fakeClient({ parsed_output: body, stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } });
     await createBodyGenerator({ client, onUsage: () => {} }).generateBody(input);

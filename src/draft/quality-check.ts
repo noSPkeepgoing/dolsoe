@@ -2,10 +2,15 @@ import type { DraftBody, Product, QualityReport } from "@contract/domain.js";
 import {
   BANNED_PHRASES,
   CHOSEONG_PATTERN,
+  EMOJI_PATTERN,
   EXCLAMATIONS_MAX,
   EXPERIENCE_CLAIM_PATTERNS,
   SENTENCES_PER_PARAGRAPH_MAX,
   STYLE_VIOLATION_PATTERNS,
+  TAGS_MAX,
+  TAGS_MIN,
+  TITLE_FORBIDDEN_PATTERN,
+  TITLE_MAX_CHARS,
   VERBATIM_MIN_CHARS,
 } from "@contract/domain.js";
 
@@ -63,6 +68,32 @@ export function checkQuality(body: DraftBody, options: CollectOptions = {}): Qua
     hasExperienceLine: (body.experienceLine ?? "").trim().length > 0,
     styleIssues: findStyleIssues(texts),
   };
+}
+
+/**
+ * REQ-032·031: 제목(키워드 앞·1회·길이·이모지 없음)·태그(개수·# 없음·중복 없음)·본문 이모지 검사. 문제 문장은 재생성 프롬프트에 그대로 들어간다.
+ * 새 필드(`keyword`·`tags`)가 없는 옛 저장 본문은 건너뛴다 — 새로 만드는 본문은 LLM 스키마가 필드를 필수로 받는다(ADR-011).
+ */
+export function findFormatProblems(body: DraftBody): string[] {
+  const problems: string[] = [];
+  const { keyword, title, tags } = body;
+  if (keyword !== undefined) {
+    if (!title.startsWith(keyword)) problems.push(`제목은 키워드("${keyword}")로 시작해야 합니다. 키워드를 제목 맨 앞에 두세요`);
+    const occurrences = title.split(keyword).length - 1;
+    if (occurrences > 1) problems.push(`제목에 키워드("${keyword}")는 한 번만 쓰세요(지금 ${occurrences}번)`);
+  }
+  if (title.length > TITLE_MAX_CHARS) problems.push(`제목은 ${TITLE_MAX_CHARS}자 이하여야 합니다(지금 ${title.length}자). 25자 안팎으로 줄이세요`);
+  if (TITLE_FORBIDDEN_PATTERN.test(title)) problems.push("제목에 이모지·장식 기호를 쓰지 마세요");
+  if (tags !== undefined) {
+    if (tags.length < TAGS_MIN) problems.push(`태그는 최소 ${TAGS_MIN}개여야 합니다(지금 ${tags.length}개)`);
+    if (tags.length > TAGS_MAX) problems.push(`태그는 최대 ${TAGS_MAX}개입니다(지금 ${tags.length}개)`);
+    if (tags.some((tag) => tag.startsWith("#"))) problems.push("태그에 # 기호를 붙이지 마세요(시스템이 붙입니다)");
+    if (new Set(tags).size !== tags.length) problems.push("태그에 중복이 있습니다");
+  }
+  const texts: string[] = [];
+  collectBotText(body, texts);
+  if (texts.some((text) => EMOJI_PATTERN.test(text))) problems.push("본문에 이모지를 쓰지 마세요. 이모지는 시스템이 소제목에 넣습니다");
+  return problems;
 }
 
 /** REQ-011: 봇이 지어낸 후기·경험 표현(걸린 부분 문자열). 사용자가 준 경험 문장은 제외한다. */

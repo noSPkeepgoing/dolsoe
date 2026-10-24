@@ -114,3 +114,26 @@ describe("renderPreview", () => {
     expect(preview).not.toContain("https://");
   });
 });
+
+describe("새 코너(REQ-027·032) — 도입·마무리·태그", () => {
+  const styled = (): DraftBody => ({ ...(bookBody() as Extract<DraftBody, { category: "book" }>), intro: "도입이에요", closing: "마무리예요", tags: ["하루키", "소설추천"] });
+
+  it("[REQ-027] 도입은 제목 다음, 마무리는 본문 끝(구매 링크 앞)에 들어간다", () => {
+    const text = renderPostText(draft(styled(), [product("1")]));
+    const at = ["퇴근 후 읽기 좋은 에세이 한 권", "도입이에요", "줄거리 문단이에요", "마무리예요", "https://www.yes24.com/addon/1"].map((part) => text.indexOf(part));
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(at.every((i) => i >= 0)).toBe(true);
+  });
+
+  it("[REQ-032] 태그는 #을 붙여 한 줄로, 대가성 문구 앞에 들어간다(④ 전달본에서 복사해 쓴다)", () => {
+    const text = renderPostText(draft(styled(), [product("1")]));
+    expect(text).toContain("#하루키 #소설추천");
+    expect(text.indexOf("#하루키")).toBeLessThan(text.indexOf(DISCLOSURE_TEXTS.yes24));
+  });
+
+  it("[REQ-027] 새 필드가 없으면 코너가 빠지고 미리보기에도 도입이 들어간다", () => {
+    expect(renderPostText(draft(bookBody(), [product("1")]))).not.toContain("#");
+    expect(renderPreview(draft(styled(), [product("1")]), 1000)).toContain("도입이에요");
+  });
+});
+

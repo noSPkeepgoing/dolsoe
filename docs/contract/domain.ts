@@ -209,6 +209,18 @@ export type ComparisonFact = z.infer<typeof ComparisonFactSchema>;
 export const DraftBodySchema = z.discriminatedUnion("category", [ApplianceBodySchema, BookBodySchema]);
 export type DraftBody = z.infer<typeof DraftBodySchema>;
 
+/**
+ * REQ-027·032 LLM 구조화 출력용 스키마: 새 필드(도입·마무리·키워드·태그)를 required로 좁힌다(ADR-011).
+ * 저장 스키마(DraftBodySchema)는 옛 저장 행을 읽어야 해서 optional로 둔다.
+ */
+export const ApplianceBodyGenSchema = ApplianceBodySchema.required({ keyword: true, intro: true, closing: true, tags: true });
+export const BookBodyGenSchema = BookBodySchema.required({ keyword: true, intro: true, closing: true, tags: true });
+
+/** REQ-032 제목에 쓰지 않는 문자: 이모지·장식 기호·괄호 장식. 이모지는 렌더러가 소제목에만 붙인다. */
+export const TITLE_FORBIDDEN_PATTERN = /[\p{Extended_Pictographic}★☆♥♡◆◇■□●○▶▷※【】\[\]]/u;
+/** REQ-031 본문(LLM 출력)에 이모지가 들어오면 렌더러의 글당 상한(EMOJI_MAX_PER_POST)을 지킬 수 없다. */
+export const EMOJI_PATTERN = /\p{Extended_Pictographic}/u;
+
 // ── 품질 검사 결과 (REQ-015) ───────────────────────────────────────
 export const QualityReportSchema = z.object({
   bannedPhrasesFound: z.array(z.string()),

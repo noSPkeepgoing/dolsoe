@@ -68,6 +68,12 @@ describe("formatCard", () => {
     expect(formatCard(styled).text).toContain("문체 점검 · 금지 표현 3개 · 경험 없음");
   });
 
+  it("[REQ-033] 태그가 있으면 카드에 복사하기 좋은 한 줄로 보인다(임시저장 후 발행 때 사람이 붙인다)", () => {
+    const withTags = formatCard(draft({ body: { ...body(), tags: ["하루키", "소설추천", "책추천"] } })).text;
+    expect(withTags).toContain("태그: #하루키 #소설추천 #책추천");
+    expect(formatCard(draft()).text).not.toContain("태그:");
+  });
+
   it("[REQ-016] 책 카드에 후기 근거 건수를 보여주고, 없으면 근거 없음을 표시한다(URL은 카드에 넣지 않는다)", () => {
     const withSources = formatCard(draft({ reviewSources: ["https://blog.example.com/a", "https://blog.example.com/b"] })).text;
     expect(withSources).toContain("후기 2건 참고");

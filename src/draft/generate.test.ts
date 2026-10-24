@@ -260,4 +260,14 @@ describe("generateDraftBody — 문체 점검(REQ-030)", () => {
     const result = await run(generatorReturning(bad, bad));
     expect(result.quality.styleIssues).toEqual(["눈물이 났"]);
   });
+
+  it("[REQ-032] 제목이 키워드로 시작하지 않으면 문제를 알려주며 재생성하고, 계속 어기면 GenerationError", async () => {
+    const bad = bookBody({ keyword: "하루키", title: "소설 추천 하루키", tags: ["a", "b", "c"] });
+    const good = bookBody({ keyword: "하루키", title: "하루키 소설 추천", tags: ["a", "b", "c"] });
+    const generator = generatorReturning(bad, good);
+    const result = await run(generator);
+    expect(generator.generateBody.mock.calls[1]?.[0].problems.join(" ")).toMatch(/키워드/);
+    expect(result.body).toEqual(good);
+    await expect(run(generatorReturning(bad, bad))).rejects.toBeInstanceOf(GenerationError);
+  });
 });

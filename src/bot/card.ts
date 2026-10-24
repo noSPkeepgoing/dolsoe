@@ -1,7 +1,7 @@
 import type { BotCallback, Category, Draft, DraftMode } from "@contract/domain.js";
 import { BotCallbackSchema, CARD_PREVIEW_MAX_CHARS } from "@contract/domain.js";
 
-import { renderPreview } from "../publish/renderer.js";
+import { formatTags, renderPreview } from "../publish/renderer.js";
 import { kstMonthDay } from "../schedule/time.js";
 
 export interface CardButton {
@@ -47,6 +47,7 @@ export function formatCard(draft: Draft): { text: string; buttons: CardButton[] 
       ? "문체 점검: 검사 전"
       : `문체 점검 · 금지 표현 ${quality.bannedPhrasesFound.length + (quality.styleIssues?.length ?? 0)}개 · 경험 ${quality.hasExperienceLine ? "있음" : "없음"}`;
   const review = reviewLine(draft);
+  const tags = draft.body === null ? null : formatTags(draft.body);
   const text = [
     `📝 초안 #${draft.id} · ${CATEGORY_LABEL[draft.category]} · ${MODE_LABEL[draft.mode]}`,
     DIVIDER,
@@ -55,6 +56,7 @@ export function formatCard(draft: Draft): { text: string; buttons: CardButton[] 
     qualityLine,
     productsLine(draft),
     ...(review === null ? [] : [review]),
+    ...(tags === null ? [] : [`태그: ${tags}`]),
   ].join("\n");
 
   const buttons: CardButton[] = [

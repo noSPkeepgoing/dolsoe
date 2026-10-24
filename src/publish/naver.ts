@@ -1,8 +1,7 @@
-import type { Draft, DraftBody, Product, PublishResult } from "@contract/domain.js";
+import type { PublishResult } from "@contract/domain.js";
 
-import { requiredDisclosures } from "./disclosure.js";
+import { renderStyledHtml } from "./naver-style.js";
 import type { Post, Publisher } from "./publisher.js";
-import { formatPrice, titleOf } from "./renderer.js";
 
 /** 네이버 블로그 에디터를 다루는 부분(브라우저)의 경계. 선택자·URL 같은 네이버 화면 지식은 이 인터페이스 뒤(naver-playwright.ts)에만 둔다(P3). */
 export type NaverEditorOutcome =
@@ -27,46 +26,8 @@ export function missingTexts(editorText: string, required: readonly string[]): s
   return required.filter((text) => !haystack.includes(collapseSpaces(text)));
 }
 
-const escapeHtml = (text: string): string =>
-  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-
-const paragraph = (text: string): string => `<p>${escapeHtml(text)}</p>`;
-const section = (heading: string, text: string): string => `<h3>${heading}</h3>\n${paragraph(text)}`;
-
-function renderTable(headers: readonly string[], rows: readonly (readonly string[])[]): string {
-  const head = `<tr>${headers.map((cell) => `<th>${escapeHtml(cell)}</th>`).join("")}</tr>`;
-  const body = rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`);
-  return `<table border="1">\n${[head, ...body].join("\n")}\n</table>`;
-}
-
-/** 제목은 에디터의 제목칸에 따로 들어가므로 본문에는 넣지 않는다. 구매 링크·경험·대가성 문구는 텍스트 렌더러(renderer.ts)와 같은 규칙으로 붙인다. */
-function renderBodyHtml(body: DraftBody, products: readonly Product[]): string[] {
-  if (body.category === "appliance") {
-    const recommendations = body.recommendations.map((rec) => paragraph(`${rec.forWhom} → ${titleOf(products, rec.productExternalId)}: ${rec.reason}`));
-    return [section("한 줄 결론", body.verdict), renderTable(body.comparison.headers, body.comparison.rows), `<h3>누구에게 어떤 제품</h3>\n${recommendations.join("\n")}`];
-  }
-  return [section("줄거리", body.synopsis), section("분위기", body.mood), section("이런 사람에게", body.recommendedFor), section("인상 깊은 대목", body.highlights)];
-}
-
-function renderLinksHtml(products: readonly Product[]): string {
-  const items = products.map((product) => {
-    const price = formatPrice(product);
-    // 링크는 http(s)만. 다른 스킴(javascript: 등)은 링크 없이 제목만 보인다.
-    const link = /^https?:\/\//i.test(product.url) ? `<a href="${escapeHtml(product.url)}">${escapeHtml(product.title)}</a>` : escapeHtml(product.title);
-    return `<p>${link}${price === null ? "" : ` — ${escapeHtml(price)}`}</p>`;
-  });
-  return `<h3>구매 링크</h3>\n${items.join("\n")}`;
-}
-
-/** 네이버 에디터에 붙여넣을 최종 본문 HTML. 대가성 문구(REQ-010)·가격 기준일·경험 한 줄(REQ-011) 규칙은 텍스트 렌더러와 같다. */
-export function renderNaverHtml(draft: Draft): string {
-  if (draft.body === null) throw new Error(`draft #${draft.id} has no body to render`);
-  const sections = [...renderBodyHtml(draft.body, draft.products), renderLinksHtml(draft.products)];
-  const experience = (draft.body.experienceLine ?? "").trim();
-  if (experience.length > 0) sections.push(section("내 경험", experience));
-  const disclosures = requiredDisclosures(draft.products).map(paragraph);
-  return [...sections, ...disclosures].join("\n");
-}
+/** 네이버 에디터에 붙여넣을 최종 본문 HTML. 서식은 naver-style.ts가 입힌다(P3, ADR-011). */
+export const renderNaverHtml = renderStyledHtml;
 
 /**
  * 사다리 ③(ADR-005 개정): 브라우저로 네이버 에디터에 글을 채우고 임시저장까지만 한다. 공개는 사람이 한다.

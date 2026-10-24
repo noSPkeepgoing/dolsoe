@@ -36,7 +36,7 @@ const bodyFor = (input: GenerateBodyInput): DraftBody => {
   return input.category === "book"
     ? {
         category: "book",
-        title: input.revision === undefined ? "새 초안" : `수정됨: ${input.revision.instruction}`,
+        title: input.revision === undefined ? "새 초안" : `수정됨 ${input.revision.instruction.split("\n")[0] ?? ""}`,
         synopsis: "s",
         mood: "m",
         recommendedFor: "r",

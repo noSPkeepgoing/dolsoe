@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Product } from "@contract/domain.js";
-import { BANNED_PHRASES, EXCLAMATIONS_MAX, SENTENCES_PER_PARAGRAPH_MAX } from "@contract/domain.js";
+import { BANNED_PHRASES, EXCLAMATIONS_MAX, SENTENCES_PER_PARAGRAPH_MAX, TAGS_MAX, TAGS_MIN, TITLE_MAX_CHARS } from "@contract/domain.js";
 
 import { buildPrompt } from "./prompt.js";
 
@@ -55,6 +55,18 @@ describe("buildPrompt", () => {
     expect(system).toContain("저는 이런 결의 책이 좋아요"); // 부록 B #3
     expect(system).toContain("저한테 하는 말이기도 해요"); // 부록 B #4-1 금지 예
     expect(buildPrompt({ ...base, category: "appliance" }).system).toContain("딱 맞을 것 같아요"); // 가전 추측 표지 #9
+  });
+
+  it("[REQ-032][REQ-031] 제목·태그·도입·마무리 규칙과 이모지 금지가 시스템 지침에 들어간다", () => {
+    for (const category of ["book", "appliance"] as const) {
+      const { system } = buildPrompt({ ...base, category });
+      expect(system).toMatch(/keyword/);
+      expect(system).toContain(`${TITLE_MAX_CHARS}자`);
+      expect(system).toContain(`${TAGS_MIN}~${TAGS_MAX}개`);
+      expect(system).toMatch(/intro/);
+      expect(system).toMatch(/closing/);
+      expect(system).toMatch(/이모지/);
+    }
   });
 
   it("[REQ-002] 카테고리별 골격 지침: 가전=비교표(행 수=상품 수), 책=한 권 리뷰(줄거리·분위기·이런 사람에게·인상 깊은 대목)", () => {

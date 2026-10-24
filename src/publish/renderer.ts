@@ -17,11 +17,30 @@ function renderBody(body: DraftBody, products: readonly Product[]): string[] {
     const recommendations = body.recommendations.map(
       (rec) => `• ${rec.forWhom} → ${titleOf(products, rec.productExternalId)}: ${rec.reason}`,
     );
-    return [body.title, `결론: ${body.verdict}`, table.join("\n"), recommendations.join("\n")];
+    return [
+      body.title,
+      ...(body.intro === undefined ? [] : [body.intro]),
+      `결론: ${body.verdict}`,
+      table.join("\n"),
+      recommendations.join("\n"),
+      ...(body.closing === undefined ? [] : [body.closing]),
+    ];
   }
   // B3 한 권 리뷰(ADR-010). 구매 링크는 renderPostText가 이어 붙인다.
-  return [body.title, `줄거리\n${body.synopsis}`, `분위기\n${body.mood}`, `이런 사람에게\n${body.recommendedFor}`, `인상 깊은 대목\n${body.highlights}`];
+  return [
+    body.title,
+    ...(body.intro === undefined ? [] : [body.intro]),
+    `줄거리\n${body.synopsis}`,
+    `분위기\n${body.mood}`,
+    `이런 사람에게\n${body.recommendedFor}`,
+    `인상 깊은 대목\n${body.highlights}`,
+    ...(body.closing === undefined ? [] : [body.closing]),
+  ];
 }
+
+/** REQ-032·033: `#태그 #태그` 한 줄(없으면 null). 카드와 ④ 전달본이 같은 형식을 쓴다. */
+export const formatTags = (body: DraftBody): string | null =>
+  body.tags === undefined || body.tags.length === 0 ? null : body.tags.map((tag) => `#${tag}`).join(" ");
 
 export const formatPrice = (product: Product): string | null => {
   if (product.priceKrw === null) return null;
@@ -48,6 +67,8 @@ export function renderPostText(draft: Draft): string {
   if (draft.body === null) throw new Error(`draft #${draft.id} has no body to render`);
   const sections = [...renderBody(draft.body, draft.products), renderLinks(draft.products)];
   if (hasExperience(draft.body)) sections.push(`내 경험\n${draft.body.experienceLine}`);
+  const tags = formatTags(draft.body);
+  if (tags !== null) sections.push(tags);
   return appendDisclosures(sections.join("\n\n"), draft.products);
 }
 
