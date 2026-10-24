@@ -184,7 +184,7 @@ describe("registerHandlers", () => {
       quality: { hasExperienceLine: true },
     });
     const card = calls.filter((c) => c.method === "sendMessage").at(-1)!;
-    expect(String(card.payload["text"])).toContain("경험 한 줄 있음");
+    expect(String(card.payload["text"])).toContain("경험 있음");
     expect(JSON.stringify(card.payload["reply_markup"])).toContain("발행");
   });
 

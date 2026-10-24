@@ -44,8 +44,8 @@ export function formatCard(draft: Draft): { text: string; buttons: CardButton[] 
   const quality = draft.quality;
   const qualityLine =
     quality === null
-      ? "품질: 검사 전"
-      : `품질: 금지 표현 ${quality.bannedPhrasesFound.length}개 · 경험 한 줄 ${quality.hasExperienceLine ? "있음" : "없음"}`;
+      ? "문체 점검: 검사 전"
+      : `문체 점검 · 금지 표현 ${quality.bannedPhrasesFound.length + (quality.styleIssues?.length ?? 0)}개 · 경험 ${quality.hasExperienceLine ? "있음" : "없음"}`;
   const review = reviewLine(draft);
   const text = [
     `📝 초안 #${draft.id} · ${CATEGORY_LABEL[draft.category]} · ${MODE_LABEL[draft.mode]}`,

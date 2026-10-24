@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Product } from "@contract/domain.js";
-import { BANNED_PHRASES } from "@contract/domain.js";
+import { BANNED_PHRASES, EXCLAMATIONS_MAX, SENTENCES_PER_PARAGRAPH_MAX } from "@contract/domain.js";
 
 import { buildPrompt } from "./prompt.js";
 
@@ -43,6 +43,18 @@ describe("buildPrompt", () => {
     expect(system).toMatch(/지어내지/);
     expect(system).toMatch(/experienceLine/);
     expect(system).toMatch(/null/);
+  });
+
+  it("[REQ-027] 문체 규칙: 해요체·수치 한도·초성 금지·체험 어미 금지, 골든셋 허용 문장 few-shot", () => {
+    const { system } = buildPrompt(base);
+    expect(system).toMatch(/해요체/);
+    expect(system).toContain(`${SENTENCES_PER_PARAGRAPH_MAX}문장`);
+    expect(system).toContain(`${EXCLAMATIONS_MAX}개`);
+    expect(system).toMatch(/ㅋㅋ/);
+    expect(system).toMatch(/더라고요/);
+    expect(system).toContain("저는 이런 결의 책이 좋아요"); // 부록 B #3
+    expect(system).toContain("저한테 하는 말이기도 해요"); // 부록 B #4-1 금지 예
+    expect(buildPrompt({ ...base, category: "appliance" }).system).toContain("딱 맞을 것 같아요"); // 가전 추측 표지 #9
   });
 
   it("[REQ-002] 카테고리별 골격 지침: 가전=비교표(행 수=상품 수), 책=한 권 리뷰(줄거리·분위기·이런 사람에게·인상 깊은 대목)", () => {

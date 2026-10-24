@@ -1,29 +1,67 @@
 import type { DraftBody, Product, QualityReport } from "@contract/domain.js";
-import { BANNED_PHRASES, EXPERIENCE_CLAIM_PATTERNS, VERBATIM_MIN_CHARS } from "@contract/domain.js";
+import {
+  BANNED_PHRASES,
+  CHOSEONG_PATTERN,
+  EXCLAMATIONS_MAX,
+  EXPERIENCE_CLAIM_PATTERNS,
+  SENTENCES_PER_PARAGRAPH_MAX,
+  STYLE_VIOLATION_PATTERNS,
+  VERBATIM_MIN_CHARS,
+} from "@contract/domain.js";
 
 /** 검사 대상은 봇이 만든 문장뿐이다. 사용자가 준 경험 문장(`experienceLine`)과 분류용 `category`는 제외(REQ-011). */
 const EXCLUDED_KEYS = new Set(["experienceLine", "category"]);
 
-function collectBotText(value: unknown, out: string[]): void {
+/** `quote.text`는 출처에서 글자 그대로 검증된 문장(`trustedQuote`)과 같을 때만 검사에서 뺀다(ADR-012). */
+interface CollectOptions {
+  trustedQuote?: string | null;
+}
+
+function collectBotText(value: unknown, out: string[], options: CollectOptions = {}, key?: string, parent?: unknown): void {
   if (typeof value === "string") {
-    out.push(value);
+    const isTrustedQuote =
+      key === "text" && options.trustedQuote != null && value === options.trustedQuote && parent !== null && typeof parent === "object" && "attribution" in parent;
+    if (!isTrustedQuote) out.push(value);
   } else if (Array.isArray(value)) {
-    for (const item of value) collectBotText(item, out);
+    for (const item of value) collectBotText(item, out, options);
   } else if (value !== null && typeof value === "object") {
-    for (const [key, nested] of Object.entries(value)) {
-      if (!EXCLUDED_KEYS.has(key)) collectBotText(nested, out);
+    for (const [childKey, nested] of Object.entries(value)) {
+      if (!EXCLUDED_KEYS.has(childKey)) collectBotText(nested, out, options, childKey, value);
     }
   }
 }
 
-/** REQ-015: 금지 표현(중복 없이)과 경험 한 줄 유무. */
-export function checkQuality(body: DraftBody): QualityReport {
+const SENTENCE_SPLIT = /(?<=[.!?。])\s+/;
+
+/** REQ-027·030: 체험 어미·L4 신호 패턴, 느낌표·문단 문장 수 한도, 초성 표현. 걸린 부분·사유를 사람이 읽을 문자열로 돌려준다. */
+function findStyleIssues(texts: readonly string[]): string[] {
+  const issues: string[] = [];
+  const joined = texts.join("\n");
+  for (const pattern of STYLE_VIOLATION_PATTERNS) {
+    const match = pattern.exec(joined);
+    if (match !== null) issues.push(match[0]);
+  }
+  const exclamations = (joined.match(/!/g) ?? []).length;
+  if (exclamations > EXCLAMATIONS_MAX) issues.push(`느낌표 ${exclamations}개(최대 ${EXCLAMATIONS_MAX})`);
+  const longest = Math.max(
+    0,
+    ...texts.flatMap((text) => text.split("\n").map((paragraph) => paragraph.trim().split(SENTENCE_SPLIT).filter((sentence) => sentence.length > 0).length)),
+  );
+  if (longest > SENTENCES_PER_PARAGRAPH_MAX) issues.push(`문단 문장 ${longest}개(최대 ${SENTENCES_PER_PARAGRAPH_MAX})`);
+  const choseong = CHOSEONG_PATTERN.exec(joined);
+  if (choseong !== null) issues.push(`초성 표현 ${choseong[0]}`);
+  return issues;
+}
+
+/** REQ-015·030: 금지 표현(중복 없이)·문체 위반·경험 한 줄 유무. */
+export function checkQuality(body: DraftBody, options: CollectOptions = {}): QualityReport {
   const texts: string[] = [];
-  collectBotText(body, texts);
+  collectBotText(body, texts, options);
   const joined = texts.join("\n");
   return {
     bannedPhrasesFound: BANNED_PHRASES.filter((phrase) => joined.includes(phrase)),
     hasExperienceLine: (body.experienceLine ?? "").trim().length > 0,
+    styleIssues: findStyleIssues(texts),
   };
 }
 

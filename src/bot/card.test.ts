@@ -60,10 +60,12 @@ describe("formatCard", () => {
     for (const b of buttons) expect(Buffer.byteLength(b.data)).toBeLessThanOrEqual(64); // 텔레그램 callback_data 한도
   });
 
-  it("[REQ-015] 품질 한 줄: 금지 표현 개수와 경험 한 줄 있음/없음", () => {
-    expect(formatCard(draft()).text).toContain("품질: 금지 표현 0개 · 경험 한 줄 없음");
+  it("[REQ-015][REQ-030] 문체 점검 한 줄: 금지 표현(+문체 위반) 개수와 경험 있음/없음", () => {
+    expect(formatCard(draft()).text).toContain("문체 점검 · 금지 표현 0개 · 경험 없음");
     const dirty = draft({ quality: { bannedPhrasesFound: ["a", "b"], hasExperienceLine: true } });
-    expect(formatCard(dirty).text).toContain("품질: 금지 표현 2개 · 경험 한 줄 있음");
+    expect(formatCard(dirty).text).toContain("문체 점검 · 금지 표현 2개 · 경험 있음");
+    const styled = draft({ quality: { bannedPhrasesFound: ["a"], hasExperienceLine: false, styleIssues: ["눈물이 났", "느낌표 4개(최대 3)"] } });
+    expect(formatCard(styled).text).toContain("문체 점검 · 금지 표현 3개 · 경험 없음");
   });
 
   it("[REQ-016] 책 카드에 후기 근거 건수를 보여주고, 없으면 근거 없음을 표시한다(URL은 카드에 넣지 않는다)", () => {
@@ -94,7 +96,7 @@ describe("formatCard", () => {
   it("[REQ-007] 본문이 아주 길어도 카드는 텔레그램 메시지 한도를 넘지 않는다", () => {
     const { text } = formatCard(draft({ body: body("가".repeat(10_000)) }));
     expect(text.length).toBeLessThanOrEqual(TELEGRAM_MAX_MESSAGE_CHARS);
-    expect(text).toContain("품질:"); // 잘려도 품질 줄은 남는다
+    expect(text).toContain("문체 점검"); // 잘려도 점검 줄은 남는다
   });
 });
 

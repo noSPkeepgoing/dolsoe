@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ApplianceBody, BookBody, Product } from "@contract/domain.js";
+import { EXCLAMATIONS_MAX, SENTENCES_PER_PARAGRAPH_MAX } from "@contract/domain.js";
 
 import { checkQuality, findCopyProblems, findExperienceClaims, validateAgainstProducts } from "./quality-check.js";
 
@@ -175,5 +176,65 @@ describe("findExperienceClaims", () => {
 
   it("[REQ-011] 사용자가 준 경험 문장(experienceLine)은 검사 대상이 아니다", () => {
     expect(findExperienceClaims(appliance({ experienceLine: "직접 써보니 소음이 컸어요" }))).toEqual([]);
+  });
+});
+
+describe("checkQuality 문체 점검 (부록 B 골든셋)", () => {
+  const styleOf = (sentence: string, category: "book" | "appliance" = "book"): string[] =>
+    (category === "book" ? checkQuality(book({ mood: sentence })) : checkQuality(appliance({ verdict: sentence }))).styleIssues ?? [];
+
+  it.each([
+    ["#1", "하루가 길었던 날엔 긴 책보다 짧은 문장이 필요한 것 같아요", "book"],
+    ["#2", "후기를 보면 잔잔한데 은근히 위로가 된다는 반응이 많은 것 같아요", "book"],
+    ["#3", "저는 이런 결의 책이 좋아요", "book"],
+    ["#4", "이런 책 한 권 옆에 두면 마음이 좀 놓일 것 같아요", "book"],
+    ["#8", "리터당 10,750원인 C가 가장 앞서요", "appliance"],
+    ["#9", "1인가구라면 A(3.5L)가 딱 맞을 것 같아요", "appliance"],
+    ["#10", "저라면 식구가 많은 집엔 C를 먼저 권하고 싶어요", "appliance"],
+  ] as const)("[REQ-030] 허용 %s 문장은 문체 위반 0개: %s", (_id, sentence, category) => {
+    expect(styleOf(sentence, category)).toEqual([]);
+  });
+
+  it.each([
+    ["#4-1a", "저한테 하는 말이기도 해요", "book"],
+    ["#4-1b", "이 대목이 와닿았어요", "book"],
+    ["#4-1c", "울컥했어요", "book"],
+    ["#5", "퇴근길에 이 책을 펼쳤는데 눈물이 났어요", "book"],
+    ["#6", "주말 아침에 커피 옆에 두고 펼쳤어요", "book"],
+    ["#11", "저희집이 좁은데도 쏙 들어가더라구요", "appliance"],
+    ["#12a", "소음이 작아요", "appliance"],
+    ["#12b", "오래 써도 튼튼해요", "appliance"],
+    ["#13", "3주 썼는데 배터리가 6시간 갔어요", "appliance"],
+  ] as const)("[REQ-030] 금지 %s 문장은 문체 위반 1개 이상: %s", (_id, sentence, category) => {
+    expect(styleOf(sentence, category).length).toBeGreaterThan(0);
+  });
+
+  it("[REQ-030] #14 사용자 메모(experienceLine) 원문은 검사에서 제외한다", () => {
+    expect(checkQuality(book({ experienceLine: "출퇴근길에 읽었어요, 써봤더니 소음이 컸어요" })).styleIssues).toEqual([]);
+  });
+
+  it("[REQ-027] 느낌표가 글당 상한을 넘으면 위반", () => {
+    const ok = "!".repeat(EXCLAMATIONS_MAX);
+    expect(styleOf(`좋아요${ok}`)).toEqual([]);
+    expect(styleOf(`좋아요${ok}!`).join(" ")).toMatch(/느낌표/);
+  });
+
+  it("[REQ-027] 한 문단이 문장 상한을 넘으면 위반(문단 = 필드 값·줄바꿈 단위)", () => {
+    const sentences = (n: number): string => Array.from({ length: n }, (_, i) => `문장 ${i}이에요.`).join(" ");
+    expect(styleOf(sentences(SENTENCES_PER_PARAGRAPH_MAX))).toEqual([]);
+    expect(styleOf(sentences(SENTENCES_PER_PARAGRAPH_MAX + 1)).join(" ")).toMatch(/문단/);
+    expect(styleOf(`${sentences(SENTENCES_PER_PARAGRAPH_MAX)}\n${sentences(SENTENCES_PER_PARAGRAPH_MAX)}`)).toEqual([]);
+  });
+
+  it("[REQ-027] 초성 표현(ㅋㅋ·ㅠㅠ)은 위반", () => {
+    expect(styleOf("재밌어요 ㅋㅋ").join(" ")).toMatch(/초성/);
+    expect(styleOf("슬퍼요 ㅠㅠ").join(" ")).toMatch(/초성/);
+  });
+
+  it("[REQ-030] quote.text는 trustedQuote와 글자 그대로 같을 때만 검사 제외, 다르면 검사한다", () => {
+    const quoted = book({ quote: { text: "울컥했던 그날의 기록", attribution: "— 『책』, 저자", origin: "web" } });
+    expect(checkQuality(quoted, { trustedQuote: "울컥했던 그날의 기록" }).styleIssues).toEqual([]);
+    expect(checkQuality(quoted, { trustedQuote: "다른 문장" }).styleIssues?.length).toBeGreaterThan(0);
+    expect(checkQuality(quoted).styleIssues?.length).toBeGreaterThan(0);
   });
 });

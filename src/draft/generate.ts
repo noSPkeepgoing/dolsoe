@@ -102,9 +102,11 @@ export async function generateDraftBody(input: {
       avoidPhrases = quality.bannedPhrasesFound;
       continue;
     }
-    if (quality.bannedPhrasesFound.length > 0 && attempt < REGENERATE_MAX_RETRIES) {
+    // 금지 표현(REQ-015)·문체 위반(REQ-030)은 1회 재생성하고, 남으면 카드에 개수만 표시한다(차단 안 함).
+    const nonBlocking = [...quality.bannedPhrasesFound, ...(quality.styleIssues ?? [])];
+    if (nonBlocking.length > 0 && attempt < REGENERATE_MAX_RETRIES) {
       problems = [];
-      avoidPhrases = quality.bannedPhrasesFound;
+      avoidPhrases = nonBlocking;
       continue;
     }
     return { body, quality };

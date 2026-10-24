@@ -38,7 +38,7 @@ describe("generateDraftBody", () => {
     const generator = generatorReturning(body());
     const result = await generateDraftBody({ generator, category: "appliance", products: PRODUCTS, memo: null });
     expect(generator.generateBody).toHaveBeenCalledTimes(1);
-    expect(result.quality).toEqual({ bannedPhrasesFound: [], hasExperienceLine: false });
+    expect(result.quality).toEqual({ bannedPhrasesFound: [], hasExperienceLine: false, styleIssues: [] });
   });
 
   it("[REQ-015] 금지 표현이 있으면 문제 표현을 알려주며 1회 자동 재생성하고, 깨끗해지면 그 결과를 쓴다", async () => {
@@ -150,7 +150,7 @@ describe("generateDraftBody — 책 한 권 리뷰(REQ-016)", () => {
     const generator = generatorReturning(bookBody());
     const result = await run(generator);
     expect(generator.generateBody).toHaveBeenCalledTimes(1);
-    expect(result.quality).toEqual({ bannedPhrasesFound: [], hasExperienceLine: false });
+    expect(result.quality).toEqual({ bannedPhrasesFound: [], hasExperienceLine: false, styleIssues: [] });
   });
 });
 
@@ -229,5 +229,35 @@ describe("generateDraftBody — 지어낸 후기(REQ-011)", () => {
     });
     expect(result.body.experienceLine).toBeNull();
     expect(result.quality.hasExperienceLine).toBe(false);
+  });
+});
+
+describe("generateDraftBody — 문체 점검(REQ-030)", () => {
+  const bookProduct: Product = { ...product("1"), source: "yes24", category: "book", affiliate: "yes24", title: "가호" };
+  const bookBody = (over: Partial<BookBody> = {}): BookBody => ({
+    category: "book",
+    title: "하루키의 새 장편",
+    synopsis: "한 남자가 오래된 기억을 따라가는 이야기예요.",
+    mood: "잔잔하고 쓸쓸해요.",
+    recommendedFor: "천천히 읽는 소설을 좋아하는 분께요.",
+    highlights: "후기마다 마지막 장면의 여운을 이야기해요.",
+    experienceLine: null,
+    ...over,
+  });
+  const run = (generator: BodyGenerator) => generateDraftBody({ generator, category: "book", products: [bookProduct], memo: null });
+
+  it("[REQ-030] 문체 위반은 걸린 부분을 알려주며 1회 재생성하고, 고쳐지면 그 결과를 쓴다", async () => {
+    const generator = generatorReturning(bookBody({ mood: "읽다 보니 눈물이 났어요" }), bookBody());
+    const result = await run(generator);
+    expect(generator.generateBody).toHaveBeenCalledTimes(1 + REGENERATE_MAX_RETRIES);
+    expect(generator.generateBody.mock.calls[1]?.[0].avoidPhrases).toContain("눈물이 났");
+    expect(result.body).toEqual(bookBody());
+    expect(result.quality.styleIssues).toEqual([]);
+  });
+
+  it("[REQ-030] 재생성 후에도 문체 위반이 남으면 차단하지 않고 개수 표시용으로 통과시킨다", async () => {
+    const bad = bookBody({ mood: "읽다 보니 눈물이 났어요" });
+    const result = await run(generatorReturning(bad, bad));
+    expect(result.quality.styleIssues).toEqual(["눈물이 났"]);
   });
 });
