@@ -156,7 +156,7 @@ describe("insertDraft / countPendingDrafts", () => {
     old.close();
 
     const db = openDb(file);
-    expect(db.pragma("user_version", { simple: true })).toBe(5);
+    expect(db.pragma("user_version", { simple: true })).toBe(6);
     const [draft] = listDraftsByStatus(db, "published");
     expect(draft?.body).toEqual(sampleBody);
     expect(draft?.reviewSources).toBeUndefined();

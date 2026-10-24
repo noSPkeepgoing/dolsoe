@@ -29,7 +29,8 @@ const APPLIANCE_RULES = `
 - title: 상품군과 개수가 드러나는 제목(예: "20평대 공기청정기 3종 비교").
 - verdict: 한 줄 결론.
 - comparison: 비교표. 비교표의 행 수는 제공된 상품 수와 같아야 하고, 각 행의 열 수는 headers의 수와 같아야 합니다. 첫 열은 제품명입니다. 데이터에 있는 항목(가격 등)만 열로 씁니다.
-- recommendations: "이런 분께 이 제품" 형태. forWhom(누구에게), productExternalId, reason(데이터에 근거한 이유).`;
+- recommendations: "이런 분께 이 제품" 형태. forWhom(누구에게), productExternalId, reason(데이터에 근거한 이유), factIds(이 판단이 기대는 근거 팩트 ID들. 근거 팩트가 없는 판단이면 생략).
+- 근거 팩트: 사용자 메시지의 <facts>는 시스템이 상품 스펙·가격에서 계산한 비교 결과입니다. 스펙 판단(용량·가격 비교, 가구 수 적합성)은 이 팩트에 있는 것만 쓰고, 팩트에 없는 수치(용량·가격·전력 등 단위가 붙은 숫자)는 쓰지 않습니다. 팩트를 가리키는 판단은 factIds에 그 ID를 적고, 적합성 판단에는 "~같아요 / ~겠어요 / ~라면 / 저라면" 같은 추측 표지를 반드시 붙입니다. 팩트가 없는 항목(소음·내구성 등)은 판단하지 않습니다. 시스템이 판단 문장 옆에 팩트의 수치 한 줄을 붙이니 reason에 같은 수치를 길게 반복하지 않아도 됩니다.`;
 
 const BOOK_RULES = `
 [문체 예시] 허용: "하루가 길었던 날엔 긴 책보다 짧은 문장이 필요한 것 같아요", "후기를 보면 잔잔한데 은근히 위로가 된다는 반응이 많은 것 같아요", "저는 이런 결의 책이 좋아요", "이런 책 한 권 옆에 두면 마음이 좀 놓일 것 같아요". 금지(읽었음을 함의): "저한테 하는 말이기도 해요", "이 대목이 와닿았어요", "울컥했어요", "퇴근길에 이 책을 펼쳤는데 눈물이 났어요", "주말 아침에 커피 옆에 두고 펼쳤어요".
@@ -60,6 +61,14 @@ export function buildPrompt(input: GenerateBodyInput): { system: string; user: s
   }));
 
   const sections = [`상품 데이터(${input.products.length}개):\n${JSON.stringify(products, null, 2)}`];
+  if (input.category === "appliance") {
+    const facts = input.facts ?? [];
+    sections.push(
+      facts.length === 0
+        ? "근거 팩트가 없습니다(스펙·비교 가능한 가격이 부족). 용량 등 스펙 판단은 하지 말고, 제공된 가격과 상품명에서 확인되는 것만 쓰세요. factIds는 생략합니다."
+        : `<facts>\n${facts.map((fact) => `- ${fact.id}: ${fact.text}`).join("\n")}\n</facts>`,
+    );
+  }
   if (input.category === "book") {
     const hasNotes = input.reviewNotes !== undefined && input.reviewNotes.trim().length > 0;
     if (hasNotes) {

@@ -13,7 +13,7 @@ describe("parseLinkMessage", () => {
     const parsed = parseLinkMessage(`${COUPANG}\n삼성 비스포크 제트 / 899,000원\n30평대 아파트, 소음 중요`);
     expect(parsed).toEqual({
       kind: "ok",
-      links: [{ type: "coupang", url: COUPANG, code: "abc123", title: "삼성 비스포크 제트", priceKrw: 899000 }],
+      links: [{ type: "coupang", url: COUPANG, code: "abc123", title: "삼성 비스포크 제트", priceKrw: 899000, specs: {} }],
       memo: "30평대 아파트, 소음 중요",
     });
   });
@@ -82,11 +82,42 @@ describe("parseLinkMessage", () => {
   });
 });
 
+describe("parseLinkMessage — 스펙 토큰 (REQ-028)", () => {
+  it("[REQ-028] `키 값` 조각은 스펙이 되고 맨 숫자는 가격이 되며 상품명만 남는다", () => {
+    expect(parseLinkMessage(`${COUPANG}\n에어프라이어 A / 59000 / 용량 3.5L`)).toMatchObject({
+      kind: "ok",
+      links: [{ title: "에어프라이어 A", priceKrw: 59000, specs: { 용량: "3.5L" } }],
+    });
+  });
+
+  it("[REQ-028] 원 표기 가격과 스펙을 섞어도 된다", () => {
+    expect(parseLinkMessage(`${COUPANG}\n에어프라이어 B / 89,000원 / 용량 5L / 소비전력 1500W`)).toMatchObject({
+      links: [{ title: "에어프라이어 B", priceKrw: 89000, specs: { 용량: "5L", 소비전력: "1500W" } }],
+    });
+  });
+
+  it("[REQ-028] 알려진 키가 아니면 스펙이 아니라 상품명의 일부다(숫자가 섞인 상품명 보호)", () => {
+    expect(parseLinkMessage(`${COUPANG}\nLG 퓨리케어 360 / 300000원`)).toMatchObject({
+      links: [{ title: "LG 퓨리케어 360", priceKrw: 300000, specs: {} }],
+    });
+  });
+
+  it("[REQ-028] 스펙을 안 적으면 specs는 비어 있다", () => {
+    expect(parseLinkMessage(`${COUPANG}\n로보락 S9`)).toMatchObject({ links: [{ specs: {} }] });
+  });
+
+  it("[REQ-028] 사용자가 적은 스펙이 상품의 specs로 들어간다", () => {
+    const parsed = parseLinkMessage(`${COUPANG}\n에어프라이어 A / 용량 3.5L`);
+    if (parsed.kind !== "ok" || parsed.links[0]?.type !== "coupang") throw new Error("unexpected");
+    expect(coupangLinkToProduct(parsed.links[0], new Date("2026-10-02T00:00:00.000Z")).specs).toEqual({ 용량: "3.5L" });
+  });
+});
+
 describe("coupangLinkToProduct", () => {
   const NOW = new Date("2026-10-02T00:00:00.000Z");
 
   it("[REQ-006][REQ-011] 가격을 줬으면 기준일(지금)과 함께, 안 줬으면 둘 다 null로 가전 상품을 만든다", () => {
-    const withPrice = coupangLinkToProduct({ type: "coupang", url: COUPANG, code: "abc123", title: "로보락 S9", priceKrw: 500000 }, NOW);
+    const withPrice = coupangLinkToProduct({ type: "coupang", url: COUPANG, code: "abc123", title: "로보락 S9", priceKrw: 500000, specs: {} }, NOW);
     expect(withPrice).toEqual({
       externalId: "abc123",
       source: "coupang_link",
@@ -98,7 +129,7 @@ describe("coupangLinkToProduct", () => {
       priceAsOf: NOW.toISOString(),
       specs: {},
     });
-    expect(coupangLinkToProduct({ type: "coupang", url: COUPANG, code: "abc123", title: "로보락 S9", priceKrw: null }, NOW)).toMatchObject({
+    expect(coupangLinkToProduct({ type: "coupang", url: COUPANG, code: "abc123", title: "로보락 S9", priceKrw: null, specs: {} }, NOW)).toMatchObject({
       priceKrw: null,
       priceAsOf: null,
     });

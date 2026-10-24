@@ -41,6 +41,28 @@ const draft = (over: Partial<Draft> = {}): Draft => ({
   ...over,
 });
 
+describe("formatCard — 스펙 출처 (REQ-028)", () => {
+  const appliance = (specOrigin?: Draft["specOrigin"]): Draft =>
+    draft({
+      category: "appliance",
+      products: [{ ...product("1"), category: "appliance", affiliate: "coupang", source: "coupang_link" }],
+      body: { category: "appliance", title: "t", verdict: "v", comparison: { headers: ["a", "b"], rows: [["1", "2"]] }, recommendations: [{ forWhom: "w", productExternalId: "1", reason: "r" }], experienceLine: null },
+      ...(specOrigin === undefined ? {} : { specOrigin }),
+    });
+
+  it("[REQ-028] 가전 카드에 스펙 출처 구분이 보인다(직접 입력 / 웹 확인 N건 / 확인 못 함)", () => {
+    expect(formatCard(appliance({ user: 2, web: 0 })).text).toContain("스펙 출처: 직접 입력");
+    expect(formatCard(appliance({ user: 1, web: 2 })).text).toContain("스펙 출처: 직접 입력 · 웹 확인 2건");
+    expect(formatCard(appliance({ user: 0, web: 3 })).text).toContain("스펙 출처: 웹 확인 3건");
+    expect(formatCard(appliance({ user: 0, web: 0 })).text).toContain("스펙 출처: 확인 못 함");
+    expect(formatCard(appliance()).text).toContain("스펙 출처: 확인 못 함"); // 옛 초안
+  });
+
+  it("[REQ-028] 책 카드에는 스펙 출처 줄이 없다", () => {
+    expect(formatCard(draft()).text).not.toContain("스펙 출처");
+  });
+});
+
 describe("formatCard", () => {
   it("[REQ-007] 본문 미리보기와 `발행 / 수정 / 폐기` 버튼 3개가 함께 보인다", () => {
     const { text, buttons } = formatCard(draft());

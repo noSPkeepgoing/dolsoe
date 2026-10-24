@@ -4,6 +4,7 @@ import { COUPANG_PARTNER_HOSTS, PRODUCTS_PER_DRAFT } from "@contract/domain.js";
 import { deliverCardSafely } from "../draft/deliver.js";
 import { generateDraftBody, type BodyGenerator } from "../draft/generate.js";
 import { gatherReviews, type ReviewCollector } from "../draft/review.js";
+import { gatherSpecs, type SpecCollector } from "../draft/spec.js";
 import { isBudgetExceeded } from "../llm/cost.js";
 import { coupangLinkToProduct, parseLinkMessage, type ParsedLink } from "../sources/link-parser.js";
 
@@ -31,6 +32,9 @@ export interface LinkDraftDeps {
   /** REQ-016: 책 후기 수집기. 없으면 "후기 근거 없음"으로 만든다. */
   reviewCollector?: ReviewCollector;
   onReviewFailure?: (reason: string) => void;
+  /** REQ-028: 가전 스펙 수집기(웹 2곳 교차 확인). 없으면 사용자가 적은 스펙만 쓴다. */
+  specCollector?: SpecCollector;
+  onSpecFailure?: (reason: string) => void;
 }
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -77,13 +81,16 @@ export async function runLinkDraft(deps: LinkDraftDeps, text: string): Promise<L
 
   await notify(`🔗 링크 ${links.length}개 확인 · 초안 만드는 중이에요…`);
 
-  let products: Product[];
+  let resolved: Product[];
   try {
-    products = await Promise.all(links.map((link) => resolveProduct(deps, link)));
+    resolved = await Promise.all(links.map((link) => resolveProduct(deps, link)));
   } catch (error) {
     return skip("source_error", `상품 정보를 가져오지 못했어요: ${messageOf(error)}`);
   }
 
+  // REQ-028: 사용자가 적은 스펙이 우선이고, 빈 항목만 웹 2곳 확인값으로 채운다(가전만). 못 채운 항목은 판단하지 않는다.
+  const specs = await gatherSpecs(category, resolved, deps.specCollector, deps.onSpecFailure);
+  const products = specs.products;
   const reviews = await gatherReviews(category, products, deps.reviewCollector, deps.onReviewFailure);
   let generated: Awaited<ReturnType<typeof generateDraftBody>>;
   try {
@@ -109,6 +116,7 @@ export async function runLinkDraft(deps: LinkDraftDeps, text: string): Promise<L
       memo,
       quality: generated.quality,
       ...(reviews.reviewSources === undefined ? {} : { reviewSources: reviews.reviewSources }),
+      ...(category === "appliance" ? { specOrigin: specs.specOrigin, ...(specs.specSources === undefined ? {} : { specSources: specs.specSources }) } : {}),
     },
     products,
   );

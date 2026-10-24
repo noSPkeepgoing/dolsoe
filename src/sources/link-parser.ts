@@ -1,5 +1,5 @@
 import type { Product } from "@contract/domain.js";
-import { COUPANG_PARTNER_HOSTS, YES24_HOST_SUFFIX } from "@contract/domain.js";
+import { COUPANG_PARTNER_HOSTS, SPEC_KEYS, YES24_HOST_SUFFIX } from "@contract/domain.js";
 
 export interface CoupangLink {
   type: "coupang";
@@ -8,6 +8,8 @@ export interface CoupangLink {
   code: string;
   title: string;
   priceKrw: number | null;
+  /** REQ-028 사용자가 `키 값`으로 직접 적은 스펙(예: `용량 3.5L`). 웹 확인보다 우선한다. */
+  specs: Record<string, string>;
 }
 export interface Yes24Link {
   type: "yes24";
@@ -55,12 +57,35 @@ function classifyUrl(url: string): Classified | null {
   return null;
 }
 
-/** "상품명 / 899,000원" → 상품명과 가격(없으면 null). 상품명이 비면 null. */
-function parseNameLine(text: string): { title: string; priceKrw: number | null } | null {
-  const priceMatch = PRICE_PATTERN.exec(text);
-  const priceKrw = priceMatch === null ? null : Number(priceMatch[1]!.replaceAll(",", ""));
-  const title = text.replace(PRICE_PATTERN, "").replace(NAME_EDGE_SEPARATORS, "").trim();
-  return title.length === 0 ? null : { title, priceKrw };
+const BARE_PRICE = /^\d[\d,]{3,}$/; // "59000" — 4자리 이상 숫자만 있는 조각
+const SPEC_TOKEN = new RegExp(`^(${SPEC_KEYS.join("|")})\\s+(\\S.*)$`);
+
+/**
+ * "상품명 / 899,000원 / 용량 3.5L" → 상품명·가격(없으면 null)·스펙. 조각은 "/"로 나눈다.
+ * 스펙은 알려진 키(`SPEC_KEYS`)로 시작하는 `키 값` 조각만 인정한다 — "LG 퓨리케어 360" 같은 상품명이 스펙으로 오인되지 않게.
+ * 상품명이 비면 null.
+ */
+function parseNameLine(text: string): { title: string; priceKrw: number | null; specs: Record<string, string> } | null {
+  const specs: Record<string, string> = {};
+  let priceKrw: number | null = null;
+  const nameParts: string[] = [];
+  for (const raw of text.split("/")) {
+    const piece = raw.trim();
+    if (piece.length === 0) continue;
+    const spec = SPEC_TOKEN.exec(piece);
+    if (spec !== null) {
+      specs[spec[1]!] = spec[2]!.trim();
+    } else if (BARE_PRICE.test(piece) && priceKrw === null) {
+      priceKrw = Number(piece.replaceAll(",", ""));
+    } else {
+      nameParts.push(piece);
+    }
+  }
+  const name = nameParts.join(" / ");
+  const priceMatch = PRICE_PATTERN.exec(name);
+  if (priceMatch !== null && priceKrw === null) priceKrw = Number(priceMatch[1]!.replaceAll(",", ""));
+  const title = name.replace(PRICE_PATTERN, "").replace(NAME_EDGE_SEPARATORS, "").trim();
+  return title.length === 0 ? null : { title, priceKrw, specs };
 }
 
 /**
@@ -123,6 +148,6 @@ export function coupangLinkToProduct(link: CoupangLink, now: Date): Product {
     url: link.url,
     priceKrw: link.priceKrw,
     priceAsOf: link.priceKrw === null ? null : now.toISOString(),
-    specs: {},
+    specs: link.specs,
   };
 }

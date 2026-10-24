@@ -17,6 +17,7 @@ import { createApprovalStore, createDraftStore, createMediaStore, createPublishS
 import { runDailyDraft } from "./jobs/daily-draft.js";
 import { createBodyGenerator } from "./llm/body-generator.js";
 import { createReviewCollector } from "./llm/review-collector.js";
+import { createSpecCollector } from "./llm/spec-collector.js";
 import { recordLlmUsage } from "./llm/usage.js";
 import { createHandoffPublisher } from "./publish/handoff.js";
 import { createNaverDraftPublisher } from "./publish/naver.js";
@@ -48,6 +49,9 @@ async function main(): Promise<void> {
   // REQ-016: 책 후기 수집(웹검색). 실패해도 초안은 "후기 근거 없음"으로 계속 만든다.
   const reviewCollector = createReviewCollector({ client: anthropic, onUsage });
   const onReviewFailure = (reason: string): void => console.warn(`[review] ${reason}`);
+  // REQ-028: 가전 스펙 수집(링크 모드). 실패해도 초안은 스펙 없이 계속 만든다.
+  const specCollector = createSpecCollector({ client: anthropic, onUsage });
+  const onSpecFailure = (reason: string): void => console.warn(`[spec] ${reason}`);
   const yes24 = new Yes24Source({ apiKey: keys.yes24ApiKey });
   const store = createDraftStore(db, now);
 
@@ -74,7 +78,7 @@ async function main(): Promise<void> {
     media,
     downloadFile: createTelegramDownloader(bot.api, config.TELEGRAM_BOT_TOKEN),
     publish,
-    link: { now, generator, store, resolveYes24: (itemId) => yes24.fetchItem(itemId), reviewCollector, onReviewFailure, ...messenger },
+    link: { now, generator, store, resolveYes24: (itemId) => yes24.fetchItem(itemId), reviewCollector, onReviewFailure, specCollector, onSpecFailure, ...messenger },
   });
 
   // 수정 중 재시작으로 멈춘 초안을 먼저 되돌린다(안 그러면 승인 대기 상한을 계속 차지한다).

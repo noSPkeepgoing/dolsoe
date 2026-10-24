@@ -1,6 +1,7 @@
-import type { Category, DraftBody, Product, QualityReport } from "@contract/domain.js";
+import type { Category, ComparisonFact, DraftBody, Product, QualityReport } from "@contract/domain.js";
 import { REGENERATE_MAX_RETRIES } from "@contract/domain.js";
 
+import { computeFacts, findFactProblems } from "./facts.js";
 import { checkQuality, findCopyProblems, findExperienceClaims, findFormatProblems, validateAgainstProducts } from "./quality-check.js";
 
 export class GenerationError extends Error {}
@@ -31,6 +32,8 @@ export interface GenerateBodyInput {
   revision?: Revision;
   /** REQ-016 책 후기 근거(의역 노트). 없거나 비면 "후기 근거 없음" */
   reviewNotes?: string;
+  /** REQ-028 가전: 코드가 상품 스펙에서 계산한 근거 팩트. 모델은 이것만 근거로 판단하고 `factIds`로 가리킨다. 비어 있으면 스펙 판단을 하지 않는다. */
+  facts?: readonly ComparisonFact[];
 }
 
 /** LLM 호출 경계. 실제 구현은 src/llm.ts, 테스트는 가짜로 대체한다. */
@@ -56,6 +59,8 @@ export async function generateDraftBody(input: {
   reviewExcerpts?: readonly string[];
 }): Promise<{ body: DraftBody; quality: QualityReport }> {
   const { revision, reviewNotes } = input;
+  // 팩트는 글에 들어간 상품의 스펙·가격에서 코드가 계산한다(수정 재생성도 같은 상품이라 같은 팩트).
+  const facts = input.category === "appliance" ? computeFacts(input.products) : [];
   const expectedExperience = revision === undefined ? null : expectedExperienceLine(revision);
   let avoidPhrases: string[] = [];
   let problems: string[] = [];
@@ -70,6 +75,7 @@ export async function generateDraftBody(input: {
       problems,
       ...(revision === undefined ? {} : { revision }),
       ...(reviewNotes === undefined ? {} : { reviewNotes }),
+      ...(input.category === "appliance" ? { facts } : {}),
     });
 
     if (raw.category !== input.category) {
@@ -93,7 +99,7 @@ export async function generateDraftBody(input: {
     const body = revision === undefined ? ({ ...raw, experienceLine: null } as DraftBody) : raw;
     // 골격 문제와 지어낸 후기(REQ-011)는 둘 다 재시도 후에도 남으면 차단한다. 금지 표현(REQ-015)만 표시하고 통과시킨다.
     const claims = findExperienceClaims(body).map((claim) => `봇이 지어낸 후기·경험 표현("${claim}")이 있습니다. 데이터에 있는 사실만 쓰세요`);
-    const structural = [...validateAgainstProducts(body, input.products), ...findCopyProblems(body, input.products, input.reviewExcerpts), ...findFormatProblems(body), ...claims];
+    const structural = [...validateAgainstProducts(body, input.products), ...findCopyProblems(body, input.products, input.reviewExcerpts), ...findFormatProblems(body), ...(body.category === "appliance" ? findFactProblems(body, input.products, facts) : []), ...claims];
     const quality = checkQuality(body);
 
     if (structural.length > 0) {

@@ -39,6 +39,14 @@ function reviewLine(draft: Draft): string | null {
   return count > 0 ? `후기 ${count}건 참고` : "후기 근거 없음";
 }
 
+/** REQ-028: 가전 초안의 스펙 출처 구분("직접 입력 / 웹 확인 N건 / 확인 못 함"). 책에는 줄이 없다. */
+function specLine(draft: Draft): string | null {
+  if (draft.category !== "appliance") return null;
+  const origin = draft.specOrigin;
+  const parts = [...((origin?.user ?? 0) > 0 ? ["직접 입력"] : []), ...((origin?.web ?? 0) > 0 ? [`웹 확인 ${origin!.web}건`] : [])];
+  return `스펙 출처: ${parts.length > 0 ? parts.join(" · ") : "확인 못 함"}`;
+}
+
 /** REQ-007·015: 승인 카드. 본문 미리보기 + 품질 한 줄 + `발행 / 수정 / 폐기` 버튼. 텔레그램 평문(마크업 없음)이라 이스케이프가 필요 없다. */
 export function formatCard(draft: Draft): { text: string; buttons: CardButton[] } {
   const quality = draft.quality;
@@ -47,6 +55,7 @@ export function formatCard(draft: Draft): { text: string; buttons: CardButton[] 
       ? "문체 점검: 검사 전"
       : `문체 점검 · 금지 표현 ${quality.bannedPhrasesFound.length + (quality.styleIssues?.length ?? 0)}개 · 경험 ${quality.hasExperienceLine ? "있음" : "없음"}`;
   const review = reviewLine(draft);
+  const spec = specLine(draft);
   const tags = draft.body === null ? null : formatTags(draft.body);
   const text = [
     `📝 초안 #${draft.id} · ${CATEGORY_LABEL[draft.category]} · ${MODE_LABEL[draft.mode]}`,
@@ -56,6 +65,7 @@ export function formatCard(draft: Draft): { text: string; buttons: CardButton[] 
     qualityLine,
     productsLine(draft),
     ...(review === null ? [] : [review]),
+    ...(spec === null ? [] : [spec]),
     ...(tags === null ? [] : [`태그: ${tags}`]),
     ...(draft.photo == null ? [] : ["내 한 컷 있음"]),
   ].join("\n");

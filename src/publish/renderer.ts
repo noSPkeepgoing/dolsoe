@@ -2,6 +2,8 @@ import type { Draft, DraftBody, Product } from "@contract/domain.js";
 
 import { kstMonthDay } from "../schedule/time.js";
 
+import { computeFacts, factLinesFor } from "../draft/facts.js";
+
 import { appendDisclosures } from "./disclosure.js";
 
 const ELLIPSIS = "…";
@@ -14,8 +16,9 @@ export const titleOf = (products: readonly Product[], externalId: string): strin
 function renderBody(body: DraftBody, products: readonly Product[]): string[] {
   if (body.category === "appliance") {
     const table = [body.comparison.headers, ...body.comparison.rows].map((row) => row.join(" | "));
-    const recommendations = body.recommendations.map(
-      (rec) => `• ${rec.forWhom} → ${titleOf(products, rec.productExternalId)}: ${rec.reason}`,
+    const facts = computeFacts(products);
+    const recommendations = body.recommendations.map((rec) =>
+      [`• ${rec.forWhom} → ${titleOf(products, rec.productExternalId)}: ${rec.reason}`, ...factLinesFor(rec.factIds, facts).map((line) => `  (근거: ${line})`)].join("\n"),
     );
     return [
       body.title,

@@ -170,4 +170,14 @@ describe("buildPrompt — 경험 지우기", () => {
     expect(system).toMatch(/experienceLine 필드는 항상 null/);
     expect(system).not.toContain("이전 경험");
   });
+
+  it("[REQ-028] 가전 프롬프트에는 근거 팩트 목록과 추측 표지·팩트 밖 수치 금지 규칙이 들어가고, 팩트가 없으면 판단 생략을 지시한다", () => {
+    const applianceBase = { ...base, category: "appliance" as const };
+    const withFacts = buildPrompt({ ...applianceBase, facts: [{ id: "capacity_max", text: "용량이 가장 큰 제품은 C(12L)", productExternalId: "c" }] });
+    expect(withFacts.user).toContain("capacity_max: 용량이 가장 큰 제품은 C(12L)");
+    expect(withFacts.system).toContain("factIds");
+    expect(withFacts.system).toContain("추측 표지");
+    expect(buildPrompt({ ...applianceBase, facts: [] }).user).toContain("근거 팩트가 없습니다");
+    expect(buildPrompt(base).user).not.toContain("<facts>");
+  });
 });

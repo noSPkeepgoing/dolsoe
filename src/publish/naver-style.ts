@@ -1,6 +1,8 @@
 import type { Category, Draft, DraftBody, Product } from "@contract/domain.js";
 import { EMOJI_MAX_PER_POST } from "@contract/domain.js";
 
+import { computeFacts, factLinesFor } from "../draft/facts.js";
+
 import { requiredDisclosures } from "./disclosure.js";
 import { formatPrice, titleOf } from "./renderer.js";
 
@@ -126,6 +128,11 @@ class StyleKit {
     return `<p>${span(`font-size:${DISCLOSURE_SIZE_PX}px;color:${DISCLOSURE_COLOR}`, escapeHtml(text))}</p>`;
   }
 
+  /** 판단 문장 옆 근거 팩트 한 줄(REQ-028): 본문보다 작고 옅게. */
+  note(text: string): string {
+    return `<p>${span(`font-size:${DISCLOSURE_SIZE_PX}px;color:${DISCLOSURE_COLOR}`, escapeHtml(text))}</p>`;
+  }
+
   /** 해시태그 줄: 본문보다 작고 옅게. */
   tagLine(tags: readonly string[]): string {
     return `<p>${span(`font-size:${DISCLOSURE_SIZE_PX}px;color:${this.theme.accent}`, escapeHtml(tags.map((tag) => `#${tag}`).join(" ")))}</p>`;
@@ -169,7 +176,14 @@ function bookSections(kit: StyleKit, body: Extract<DraftBody, { category: "book"
 
 /** 가전: 한 줄 결론 콜아웃 → 한눈에 비교 → 이런 사람에게 → 총평. */
 function applianceSections(kit: StyleKit, body: Extract<DraftBody, { category: "appliance" }>, products: readonly Product[]): Section[] {
-  const recommendations = body.recommendations.map((rec) => kit.paragraph(`${rec.forWhom} → ${titleOf(products, rec.productExternalId)}: ${rec.reason}`));
+  const facts = computeFacts(products);
+  // 판단 문장 옆에 코드가 계산한 근거 팩트의 수치 한 줄을 붙인다(REQ-028).
+  const recommendations = body.recommendations.map((rec) =>
+    [
+      kit.paragraph(`${rec.forWhom} → ${titleOf(products, rec.productExternalId)}: ${rec.reason}`),
+      ...factLinesFor(rec.factIds, facts).map((line) => kit.note(`근거: ${line}`)),
+    ].join("\n"),
+  );
   const intro = body.intro === undefined ? [] : [kit.emojiParagraph(body.intro), kit.spacer()];
   const sections: Section[] = [
     [...intro, kit.heading("한 줄 결론"), kit.callout(body.verdict)],

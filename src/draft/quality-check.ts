@@ -5,6 +5,7 @@ import {
   EMOJI_PATTERN,
   EXCLAMATIONS_MAX,
   EXPERIENCE_CLAIM_PATTERNS,
+  HEDGE_MARKER_PATTERN,
   SENTENCES_PER_PARAGRAPH_MAX,
   STYLE_VIOLATION_PATTERNS,
   TAGS_MAX,
@@ -58,6 +59,14 @@ function findStyleIssues(texts: readonly string[]): string[] {
   return issues;
 }
 
+/** REQ-028: 근거 팩트를 가리키는 적합성 판단 문장에는 추측 표지("~같아요 / ~겠어요 / ~라면 …")가 하나는 있어야 한다. */
+function findMissingHedges(body: DraftBody): string[] {
+  if (body.category !== "appliance") return [];
+  return body.recommendations.flatMap((rec) =>
+    (rec.factIds ?? []).length > 0 && !HEDGE_MARKER_PATTERN.test(rec.reason) ? [`추측 표지 없는 적합성 판단(${rec.forWhom}): "~같아요/~겠어요/~라면"처럼 추측으로 쓰세요`] : [],
+  );
+}
+
 /** REQ-015·030: 금지 표현(중복 없이)·문체 위반·경험 한 줄 유무. */
 export function checkQuality(body: DraftBody, options: CollectOptions = {}): QualityReport {
   const texts: string[] = [];
@@ -66,7 +75,7 @@ export function checkQuality(body: DraftBody, options: CollectOptions = {}): Qua
   return {
     bannedPhrasesFound: BANNED_PHRASES.filter((phrase) => joined.includes(phrase)),
     hasExperienceLine: (body.experienceLine ?? "").trim().length > 0,
-    styleIssues: findStyleIssues(texts),
+    styleIssues: [...findStyleIssues(texts), ...findMissingHedges(body)],
   };
 }
 

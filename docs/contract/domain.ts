@@ -87,6 +87,17 @@ export const QUOTE_MAX_CHARS = 100; // REQ-029 필사 문구 길이 상한(1~2�
 export const CROSS_CHECK_MIN_SITES = 2; // REQ-028·029 서로 다른 사이트 몇 곳에서 글자 그대로 확인돼야 쓰는가
 export const QUOTE_SEARCH_MAX_USES = 3; // REQ-029 필사 문구 수집 웹검색 상한(비용, NFR-001)
 export const SPEC_SEARCH_MAX_USES = 3; // REQ-028 가전 스펙 수집 웹검색 상한(상품 1개당)
+/** REQ-028 링크 모드에서 `키 값`으로 받는 스펙 항목(상품명과 구분하려고 알려진 키만 인정한다). */
+export const SPEC_KEYS = ["용량", "크기", "무게", "소비전력", "전력", "소음", "풍량", "적용면적", "출력"] as const;
+/** REQ-028 용량(L) → 가구 수 적합 범위 매핑 표. 위에서부터 처음 맞는 줄을 쓴다(코드가 정하고 모델은 문장으로 풀기만 한다). */
+export const HOUSEHOLD_BY_LITERS: readonly { maxLiters: number; label: string }[] = [
+  { maxLiters: 3.5, label: "1~2인" },
+  { maxLiters: 5, label: "2~3인" },
+  { maxLiters: 7, label: "3~4인" },
+  { maxLiters: Number.POSITIVE_INFINITY, label: "4인 이상" },
+];
+/** REQ-028 적합성 판단에 붙는 추측 표지("~같아요 / ~겠어요 / ~라면 / 저라면"). 근거 팩트를 가리키는 판단 문장에 하나는 있어야 한다. */
+export const HEDGE_MARKER_PATTERN = /같아요|같습니다|겠어요|겠습니다|라면|듯해요|듯합니다|수 있어요|수 있습니다/;
 export const PHOTO_MAX_BYTES = 10 * 1024 * 1024; // REQ-034 받아들이는 사진 크기 상한(텔레그램 압축 사진은 보통 훨씬 작다)
 export const MEDIA_DIR_DEFAULT = "data/media"; // REQ-034 사진 보관 폴더(.gitignore의 /data 아래)
 
@@ -269,6 +280,8 @@ export const DraftSchema = z.object({
   /** REQ-028·029 웹 교차 확인에 쓴 출처 URL(초안 DB에만, 본문·카드에는 개수만, ADR-013). */
   quoteSources: z.array(z.string().url()).optional(),
   specSources: z.array(z.string().url()).optional(),
+  /** REQ-028 판단에 쓴 스펙 값의 출처 개수: 사용자가 직접 입력한 값 / 웹 2곳 이상 확인한 값. 둘 다 0이면 "확인 못 함". */
+  specOrigin: z.object({ user: z.number().int().nonnegative(), web: z.number().int().nonnegative() }).optional(),
   /** REQ-034 내 한 컷 사진(1장). 파일은 MEDIA_DIR에 있고 DB엔 경로만(ADR-014). */
   photo: z
     .object({ filePath: z.string().min(1), mime: z.enum(["image/jpeg", "image/png"]), bytes: z.number().int().positive() })

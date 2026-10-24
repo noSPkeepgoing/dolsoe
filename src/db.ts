@@ -92,6 +92,8 @@ const MIGRATIONS: readonly string[] = [
    );
    ALTER TABLE drafts ADD COLUMN quote_sources_json TEXT;
    ALTER TABLE drafts ADD COLUMN spec_sources_json TEXT`,
+  // v6 — 1.7e 스펙 값 출처 개수(REQ-028): 사용자 입력 / 웹 2곳 확인. 카드의 "스펙 출처" 한 줄 재료. 옛 초안은 NULL
+  `ALTER TABLE drafts ADD COLUMN spec_origin_json TEXT`,
 ];
 
 function migrate(db: Database.Database): void {
@@ -133,6 +135,10 @@ export interface NewDraft {
   quality: QualityReport | null;
   /** REQ-016 후기 근거 출처 URL. 책 초안만, 없으면 생략 */
   reviewSources?: string[];
+  /** REQ-028·029 웹 교차 확인 출처 URL(DB에만) */
+  quoteSources?: string[];
+  specSources?: string[];
+  specOrigin?: { user: number; web: number };
 }
 
 interface DraftRow {
@@ -147,6 +153,7 @@ interface DraftRow {
   review_sources_json: string | null;
   quote_sources_json: string | null;
   spec_sources_json: string | null;
+  spec_origin_json: string | null;
   photo_path: string | null;
   photo_mime: string | null;
   photo_bytes: number | null;
@@ -174,6 +181,7 @@ function rowToDraft(row: DraftRow): Draft {
     reviewSources: row.review_sources_json === null ? undefined : parseJson(row.review_sources_json),
     quoteSources: row.quote_sources_json === null ? undefined : parseJson(row.quote_sources_json),
     specSources: row.spec_sources_json === null ? undefined : parseJson(row.spec_sources_json),
+    specOrigin: row.spec_origin_json === null ? undefined : parseJson(row.spec_origin_json),
     photo:
       row.photo_path === null ? undefined : { filePath: row.photo_path, mime: row.photo_mime, bytes: row.photo_bytes },
     createdAt: row.created_at,
@@ -185,8 +193,8 @@ export function insertDraft(db: Database.Database, draft: NewDraft, now: Date): 
   const stamp = now.toISOString();
   const result = db
     .prepare(
-      `INSERT INTO drafts (category, mode, status, products_json, body_json, memo, quality_json, review_sources_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO drafts (category, mode, status, products_json, body_json, memo, quality_json, review_sources_json, quote_sources_json, spec_sources_json, spec_origin_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       draft.category,
@@ -197,6 +205,9 @@ export function insertDraft(db: Database.Database, draft: NewDraft, now: Date): 
       draft.memo,
       draft.quality === null ? null : JSON.stringify(draft.quality),
       draft.reviewSources === undefined ? null : JSON.stringify(draft.reviewSources),
+      draft.quoteSources === undefined ? null : JSON.stringify(draft.quoteSources),
+      draft.specSources === undefined ? null : JSON.stringify(draft.specSources),
+      draft.specOrigin === undefined ? null : JSON.stringify(draft.specOrigin),
       stamp,
       stamp,
     );

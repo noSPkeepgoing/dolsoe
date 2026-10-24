@@ -270,4 +270,44 @@ describe("generateDraftBody — 문체 점검(REQ-030)", () => {
     expect(result.body).toEqual(good);
     await expect(run(generatorReturning(bad, bad))).rejects.toBeInstanceOf(GenerationError);
   });
+
+  describe("근거 팩트 (REQ-028)", () => {
+    const withCapacity = [
+      { ...product("1"), priceKrw: 59000, specs: { 용량: "3.5L" } },
+      { ...product("2"), priceKrw: 129000, specs: { 용량: "12L" } },
+    ];
+
+    it("[REQ-028] 가전 생성기에는 코드가 계산한 근거 팩트가 넘어가고, 책에는 넘어가지 않는다", async () => {
+      const generator = generatorReturning(body());
+      await generateDraftBody({ generator, category: "appliance", products: withCapacity, memo: null });
+      const input = generator.generateBody.mock.calls[0]![0] as { facts: { id: string }[] };
+      expect(input.facts.map((f) => f.id)).toEqual(expect.arrayContaining(["capacity_max", "price_per_liter_min", "household:1"]));
+    });
+
+    it("[REQ-028] 용량 스펙이 없으면 용량 팩트가 없다(가격만 있으면 용량 판단 생략)", async () => {
+      const generator = generatorReturning(body());
+      await generateDraftBody({ generator, category: "appliance", products: PRODUCTS, memo: null });
+      const input = generator.generateBody.mock.calls[0]![0] as { facts: { id: string }[] };
+      expect(input.facts.map((f) => f.id)).toEqual(["price_min"]);
+    });
+
+    it("[REQ-028] 존재하지 않는 factIds나 팩트에 없는 수치가 있으면 문제를 알려주며 재생성하고, 계속 틀리면 GenerationError", async () => {
+      const bad = body({ recommendations: [{ forWhom: "원룸", productExternalId: "1", reason: "20L라 넉넉할 것 같아요", factIds: ["nope"] }] });
+      const generator = generatorReturning(bad, body());
+      await generateDraftBody({ generator, category: "appliance", products: withCapacity, memo: null });
+      expect(generator.generateBody).toHaveBeenCalledTimes(2);
+      expect((generator.generateBody.mock.calls[1]![0] as { problems: string[] }).problems.join("\n")).toMatch(/nope[\s\S]*20L/);
+
+      await expect(generateDraftBody({ generator: generatorReturning(bad), category: "appliance", products: withCapacity, memo: null })).rejects.toThrow(GenerationError);
+    });
+
+    it("[REQ-028] 팩트를 가리키는 판단에 추측 표지가 없으면 문체 점검에 잡혀 1회 재생성하고, 남으면 개수만 표시한다", async () => {
+      const blunt = body({ recommendations: [{ forWhom: "원룸", productExternalId: "1", reason: "3.5L라서 딱 맞아요", factIds: ["household:1"] }] });
+      const hedged = body({ recommendations: [{ forWhom: "원룸", productExternalId: "1", reason: "3.5L라서 1~2인 가구라면 딱 맞을 것 같아요", factIds: ["household:1"] }] });
+      const fixed = await generateDraftBody({ generator: generatorReturning(blunt, hedged), category: "appliance", products: withCapacity, memo: null });
+      expect(fixed.quality.styleIssues).toEqual([]);
+      const stuck = await generateDraftBody({ generator: generatorReturning(blunt, blunt), category: "appliance", products: withCapacity, memo: null });
+      expect(stuck.quality.styleIssues).toEqual([expect.stringContaining("추측 표지")]);
+    });
+  });
 });

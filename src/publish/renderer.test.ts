@@ -137,3 +137,24 @@ describe("새 코너(REQ-027·032) — 도입·마무리·태그", () => {
   });
 });
 
+describe("근거 팩트 한 줄 (REQ-028)", () => {
+  const appliance = (id: string, price: number, capacity: string): Product => ({
+    ...product(id), source: "coupang_link", category: "appliance", affiliate: "coupang", url: `https://link.coupang.com/a/${id}`, priceKrw: price, specs: { 용량: capacity },
+  });
+  const products = [appliance("a", 59000, "3.5L"), appliance("c", 129000, "12L")];
+  const body: DraftBody = {
+    category: "appliance",
+    title: "에어프라이어 2종 비교",
+    verdict: "결론",
+    comparison: { headers: ["제품", "가격"], rows: [["책 a", "5만9천원"], ["책 c", "12만9천원"]] },
+    recommendations: [{ forWhom: "식구 많은 집", productExternalId: "c", reason: "4인 이상이라면 넉넉할 것 같아요", factIds: ["capacity_max"] }, { forWhom: "그냥", productExternalId: "a", reason: "가벼워요" }],
+    experienceLine: null,
+  };
+  const draft: Draft = { id: 1, category: "appliance", mode: "link", status: "awaiting_approval", products, body, memo: null, quality: null, createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" };
+
+  it("[REQ-028] 팩트를 가리키는 판단 문장 아래에 코드가 계산한 수치 한 줄이 붙고, 가리키지 않으면 붙지 않는다", () => {
+    const text = renderPostText(draft);
+    expect(text).toContain("(근거: 용량이 가장 큰 제품은 책 c(12L))");
+    expect(text.match(/\(근거:/g)).toHaveLength(1);
+  });
+});

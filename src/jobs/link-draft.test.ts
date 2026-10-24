@@ -6,6 +6,7 @@ import { MAX_PENDING_DRAFTS, MONTHLY_LLM_BUDGET_KRW, PRODUCTS_PER_DRAFT } from "
 import type { NewDraft } from "../db.js";
 import type { BodyGenerator, GenerateBodyInput } from "../draft/generate.js";
 import type { ReviewCollector } from "../draft/review.js";
+import type { SpecCollector } from "../draft/spec.js";
 
 import type { DraftStore } from "./daily-draft.js";
 import { runLinkDraft } from "./link-draft.js";
@@ -46,7 +47,7 @@ const bodyFor = (input: GenerateBodyInput): DraftBody =>
         experienceLine: null,
       };
 
-function setup(over: { costKrw?: number; pending?: number; resolveYes24?: (id: string) => Promise<Product>; generator?: BodyGenerator; reviewCollector?: ReviewCollector } = {}) {
+function setup(over: { costKrw?: number; pending?: number; resolveYes24?: (id: string) => Promise<Product>; generator?: BodyGenerator; reviewCollector?: ReviewCollector; specCollector?: SpecCollector } = {}) {
   const saved: NewDraft[] = [];
   const store: DraftStore = {
     countPending: () => over.pending ?? 0,
@@ -63,7 +64,7 @@ function setup(over: { costKrw?: number; pending?: number; resolveYes24?: (id: s
   const deliverCard = vi.fn<(draft: Draft) => Promise<void>>(async () => {});
   const resolveYes24 = over.resolveYes24 ?? vi.fn(async (id: string) => yes24Product(id));
   const run = (text: string) =>
-    runLinkDraft({ now: () => NOW, store, generator, resolveYes24, notify, deliverCard, ...(over.reviewCollector === undefined ? {} : { reviewCollector: over.reviewCollector }) }, text);
+    runLinkDraft({ now: () => NOW, store, generator, resolveYes24, notify, deliverCard, ...(over.reviewCollector === undefined ? {} : { reviewCollector: over.reviewCollector }), ...(over.specCollector === undefined ? {} : { specCollector: over.specCollector }) }, text);
   return { saved, notify, deliverCard, generator, resolveYes24, run };
 }
 
@@ -191,5 +192,47 @@ describe("runLinkDraft", () => {
     await expect(run(`${COUPANG}\n제품`)).resolves.toMatchObject({ status: "created" });
     expect(saved).toHaveLength(1);
     expect(notify.mock.calls.at(-1)![0]).toMatch(/#1.*telegram down/s);
+  });
+
+  describe("스펙 (REQ-028)", () => {
+    const evidence = (value: string) => [
+      { url: "https://a.example/1", excerpt: `용량 ${value}` },
+      { url: "https://b.example/1", excerpt: `${value} 대용량` },
+    ];
+
+    it("[REQ-028] 용량 3개를 적으면 검색 없이 그 값이 상품 스펙·생성기 팩트에 들어가고 카드는 '직접 입력'이다", async () => {
+      const specCollector: SpecCollector = { collect: vi.fn(async () => ({ candidates: [], evidence: [] })) };
+      const { saved, generator, run } = setup({ specCollector });
+      await run(`${COUPANG}\nA 에어프라이어 / 59000 / 용량 3.5L\nhttps://link.coupang.com/a/b2\nB 에어프라이어 / 89000 / 용량 5L\nhttps://link.coupang.com/a/c3\nC 에어프라이어 / 129000 / 용량 12L`);
+      expect(specCollector.collect).not.toHaveBeenCalled();
+      expect(saved[0]).toMatchObject({ specOrigin: { user: 3, web: 0 }, products: [{ specs: { 용량: "3.5L" } }, { specs: { 용량: "5L" } }, { specs: { 용량: "12L" } }] });
+      const facts = vi.mocked(generator.generateBody).mock.calls[0]![0].facts?.map((f) => f.id);
+      expect(facts).toEqual(expect.arrayContaining(["capacity_max", "price_per_liter_min"]));
+    });
+
+    it("[REQ-028] 가격만 적고 웹 확인도 안 되면 용량 판단 팩트가 없고 카드는 '확인 못 함'이다", async () => {
+      const specCollector: SpecCollector = { collect: vi.fn(async () => ({ candidates: [{ key: "용량", value: "9L" }], evidence: [evidence("9L")[0]!] })) };
+      const { saved, generator, run } = setup({ specCollector });
+      await run(`${COUPANG}\nA 에어프라이어 / 59000\nhttps://link.coupang.com/a/b2\nB 에어프라이어 / 89000`);
+      expect(saved[0]).toMatchObject({ specOrigin: { user: 0, web: 0 } });
+      expect(saved[0]!.specSources).toBeUndefined();
+      expect(vi.mocked(generator.generateBody).mock.calls[0]![0].facts?.map((f) => f.id)).toEqual(["price_min"]);
+    });
+
+    it("[REQ-028] 웹에서 2곳 확인된 값은 빈 칸에 채우고 출처 URL은 DB 필드(specSources)에만 둔다", async () => {
+      const specCollector: SpecCollector = { collect: vi.fn(async () => ({ candidates: [{ key: "용량", value: "5L" }], evidence: evidence("5L") })) };
+      const { saved, run } = setup({ specCollector });
+      await run(`${COUPANG}\nA 에어프라이어 / 59000`);
+      expect(saved[0]).toMatchObject({ specOrigin: { user: 0, web: 1 }, specSources: ["https://a.example/1", "https://b.example/1"], products: [{ specs: { 용량: "5L" } }] });
+      expect(JSON.stringify(saved[0]!.body)).not.toContain("a.example");
+    });
+
+    it("[REQ-028] 책 링크는 스펙을 수집하지 않고 스펙 출처 필드도 남기지 않는다", async () => {
+      const specCollector: SpecCollector = { collect: vi.fn(async () => ({ candidates: [], evidence: [] })) };
+      const { saved, run } = setup({ specCollector });
+      await run(YES24);
+      expect(specCollector.collect).not.toHaveBeenCalled();
+      expect(saved[0]!.specOrigin).toBeUndefined();
+    });
   });
 });
