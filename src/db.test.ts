@@ -9,6 +9,9 @@ import type { DraftBody, Product } from "@contract/domain.js";
 
 import {
   addLlmCostKrw,
+  attachExperienceLine,
+  removeDraftPhoto,
+  setDraftPhoto,
   claimDueJobs,
   failOpenPublishAttempts,
   finishPublishAttempt,
@@ -153,10 +156,11 @@ describe("insertDraft / countPendingDrafts", () => {
     old.close();
 
     const db = openDb(file);
-    expect(db.pragma("user_version", { simple: true })).toBe(4);
+    expect(db.pragma("user_version", { simple: true })).toBe(5);
     const [draft] = listDraftsByStatus(db, "published");
     expect(draft?.body).toEqual(sampleBody);
     expect(draft?.reviewSources).toBeUndefined();
+    expect(draft?.photo).toBeUndefined(); // [REQ-034] v5 이전 초안은 사진 없음
     db.close();
   });
 
@@ -342,5 +346,35 @@ describe("publish attempts (ADR-006)", () => {
     expect(first?.result).toMatchObject({ ok: true });
     expect(second?.result).toMatchObject({ ok: false, mode: "manual", retryable: false, reason: "재시작으로 중단" });
     expect(second?.finishedAt).not.toBeNull();
+  });
+});
+
+describe("내 한 컷 (REQ-034, DB v5)", () => {
+  const base = { category: "book" as const, mode: "daily" as const, products: [sampleProduct("1")], body: sampleBody, memo: null, quality: { bannedPhrasesFound: [], hasExperienceLine: false } };
+  const photo = (filePath: string) => ({ filePath, mime: "image/jpeg" as const, bytes: 10 });
+
+  it("[REQ-034] 사진은 승인 대기 초안에만 붙고, 다시 붙이면 교체되며 이전 경로를 돌려준다", () => {
+    const db = openDb(":memory:");
+    const waiting = insertDraft(db, { ...base, status: "awaiting_approval" }, NOW);
+    const done = insertDraft(db, { ...base, status: "handed_off" }, NOW);
+    expect(setDraftPhoto(db, done.id, photo("/m/x.jpg"), NOW)).toBeNull();
+    expect(setDraftPhoto(db, waiting.id, photo("/m/a.jpg"), NOW)).toEqual({ replacedPath: null });
+    expect(setDraftPhoto(db, waiting.id, photo("/m/b.jpg"), NOW)).toEqual({ replacedPath: "/m/a.jpg" });
+    expect(getDraft(db, waiting.id)?.photo).toEqual(photo("/m/b.jpg"));
+    expect(removeDraftPhoto(db, waiting.id)).toBe("/m/b.jpg");
+    expect(getDraft(db, waiting.id)?.photo).toBeUndefined();
+    expect(removeDraftPhoto(db, waiting.id)).toBeNull();
+    db.close();
+  });
+
+  it("[REQ-034][REQ-011] 메모는 승인 대기일 때만 경험 한 줄로 붙고 품질의 경험 표시도 켠다", () => {
+    const db = openDb(":memory:");
+    const waiting = insertDraft(db, { ...base, status: "awaiting_approval" }, NOW);
+    const drafting = insertDraft(db, { ...base, status: "drafting" }, NOW);
+    expect(attachExperienceLine(db, drafting.id, "메모", NOW)).toBe(false);
+    expect(attachExperienceLine(db, waiting.id, "메모", NOW)).toBe(true);
+    expect(getDraft(db, waiting.id)).toMatchObject({ body: { experienceLine: "메모" }, quality: { hasExperienceLine: true } });
+    expect(getDraft(db, drafting.id)?.body).toMatchObject({ experienceLine: sampleBody.experienceLine });
+    db.close();
   });
 });

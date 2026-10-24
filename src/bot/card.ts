@@ -57,6 +57,7 @@ export function formatCard(draft: Draft): { text: string; buttons: CardButton[] 
     productsLine(draft),
     ...(review === null ? [] : [review]),
     ...(tags === null ? [] : [`태그: ${tags}`]),
+    ...(draft.photo == null ? [] : ["내 한 컷 있음"]),
   ].join("\n");
 
   const buttons: CardButton[] = [

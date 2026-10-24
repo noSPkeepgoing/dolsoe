@@ -82,6 +82,16 @@ const MIGRATIONS: readonly string[] = [
    CREATE INDEX idx_publish_attempts_draft ON publish_attempts (draft_id)`,
   // v4 — 1.6 책 후기 근거 출처 URL(REQ-016, ADR-010). 발행 본문에는 넣지 않고 여기에만 보관한다. 옛 초안은 NULL
   `ALTER TABLE drafts ADD COLUMN review_sources_json TEXT`,
+  // v5 — 1.7c 내 한 컷 사진(REQ-034, ADR-014)과 웹 교차 확인 출처(REQ-028·029, ADR-013). 사진은 파일이고 여기엔 경로만 둔다. 옛 초안은 NULL
+  `CREATE TABLE draft_photos (
+     draft_id INTEGER PRIMARY KEY REFERENCES drafts (id),
+     file_path TEXT NOT NULL,
+     mime TEXT NOT NULL,
+     bytes INTEGER NOT NULL,
+     created_at TEXT NOT NULL
+   );
+   ALTER TABLE drafts ADD COLUMN quote_sources_json TEXT;
+   ALTER TABLE drafts ADD COLUMN spec_sources_json TEXT`,
 ];
 
 function migrate(db: Database.Database): void {
@@ -135,9 +145,18 @@ interface DraftRow {
   memo: string | null;
   quality_json: string | null;
   review_sources_json: string | null;
+  quote_sources_json: string | null;
+  spec_sources_json: string | null;
+  photo_path: string | null;
+  photo_mime: string | null;
+  photo_bytes: number | null;
   created_at: string;
   updated_at: string;
 }
+
+/** drafts + 사진(없으면 NULL 세 칸). 조회는 모두 이 SELECT를 거쳐 row→도메인 매핑이 한 곳에 남는다. */
+const DRAFT_SELECT = `SELECT d.*, p.file_path AS photo_path, p.mime AS photo_mime, p.bytes AS photo_bytes
+  FROM drafts d LEFT JOIN draft_photos p ON p.draft_id = d.id`;
 
 const parseJson = (text: string | null): unknown => (text === null ? null : JSON.parse(text));
 
@@ -153,6 +172,10 @@ function rowToDraft(row: DraftRow): Draft {
     memo: row.memo,
     quality: parseJson(row.quality_json),
     reviewSources: row.review_sources_json === null ? undefined : parseJson(row.review_sources_json),
+    quoteSources: row.quote_sources_json === null ? undefined : parseJson(row.quote_sources_json),
+    specSources: row.spec_sources_json === null ? undefined : parseJson(row.spec_sources_json),
+    photo:
+      row.photo_path === null ? undefined : { filePath: row.photo_path, mime: row.photo_mime, bytes: row.photo_bytes },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -177,12 +200,12 @@ export function insertDraft(db: Database.Database, draft: NewDraft, now: Date): 
       stamp,
       stamp,
     );
-  const row = db.prepare("SELECT * FROM drafts WHERE id = ?").get(result.lastInsertRowid) as DraftRow;
+  const row = db.prepare(`${DRAFT_SELECT} WHERE d.id = ?`).get(result.lastInsertRowid) as DraftRow;
   return rowToDraft(row);
 }
 
 export function getDraft(db: Database.Database, id: number): Draft | null {
-  const row = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRow | undefined;
+  const row = db.prepare(`${DRAFT_SELECT} WHERE d.id = ?`).get(id) as DraftRow | undefined;
   return row === undefined ? null : rowToDraft(row);
 }
 
@@ -212,8 +235,69 @@ export function saveRevision(db: Database.Database, id: number, body: DraftBody,
 }
 
 export function listDraftsByStatus(db: Database.Database, status: DraftStatus): Draft[] {
-  const rows = db.prepare("SELECT * FROM drafts WHERE status = ? ORDER BY id").all(status) as DraftRow[];
+  const rows = db.prepare(`${DRAFT_SELECT} WHERE d.status = ? ORDER BY d.id`).all(status) as DraftRow[];
   return rows.map(rowToDraft);
+}
+
+/**
+ * REQ-034: 승인 대기 초안에만 메모(경험 한 줄)를 붙인다. LLM 없이 본문 한 필드만 바꾸는 조건부 갱신(CAS)이라
+ * 그 사이 수정·발행·폐기로 상태가 바뀌었으면 false. 이미 있던 문장은 교체된다.
+ */
+export function attachExperienceLine(db: Database.Database, id: number, text: string, now: Date): boolean {
+  return db.transaction(() => {
+    const row = db.prepare("SELECT body_json, quality_json FROM drafts WHERE id = ? AND status = 'awaiting_approval'").get(id) as
+      | { body_json: string | null; quality_json: string | null }
+      | undefined;
+    if (row === undefined || row.body_json === null) return false;
+    const body = { ...(JSON.parse(row.body_json) as Record<string, unknown>), experienceLine: text };
+    const quality = row.quality_json === null ? null : { ...(JSON.parse(row.quality_json) as Record<string, unknown>), hasExperienceLine: true };
+    const result = db
+      .prepare("UPDATE drafts SET body_json = ?, quality_json = ?, updated_at = ? WHERE id = ? AND status = 'awaiting_approval'")
+      .run(JSON.stringify(body), quality === null ? null : JSON.stringify(quality), now.toISOString(), id);
+    return result.changes === 1;
+  })();
+}
+
+export interface DraftPhotoRecord {
+  filePath: string;
+  mime: "image/jpeg" | "image/png";
+  bytes: number;
+}
+
+/**
+ * REQ-034: 승인 대기 초안에 사진 1장을 붙인다(다시 보내면 교체). 상태가 바뀌어 붙이지 못했으면 null,
+ * 붙였으면 `replacedPath` = 교체돼 쓸모없어진 이전 파일 경로(없으면 null) — 파일 삭제는 호출 쪽.
+ */
+export function setDraftPhoto(db: Database.Database, id: number, photo: DraftPhotoRecord, now: Date): { replacedPath: string | null } | null {
+  return db.transaction(() => {
+    const alive = db.prepare("SELECT 1 FROM drafts WHERE id = ? AND status = 'awaiting_approval'").get(id);
+    if (alive === undefined) return null;
+    const previous = db.prepare("SELECT file_path FROM draft_photos WHERE draft_id = ?").get(id) as { file_path: string } | undefined;
+    db.prepare(
+      `INSERT INTO draft_photos (draft_id, file_path, mime, bytes, created_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (draft_id) DO UPDATE SET file_path = excluded.file_path, mime = excluded.mime, bytes = excluded.bytes, created_at = excluded.created_at`,
+    ).run(id, photo.filePath, photo.mime, photo.bytes, now.toISOString());
+    const replaced = previous?.file_path;
+    return { replacedPath: replaced === undefined || replaced === photo.filePath ? null : replaced };
+  })();
+}
+
+/** 사진 행을 지우고 파일 경로를 돌려준다(파일 삭제는 호출 쪽). 없으면 null. */
+export function removeDraftPhoto(db: Database.Database, id: number): string | null {
+  return db.transaction(() => {
+    const row = db.prepare("SELECT file_path FROM draft_photos WHERE draft_id = ?").get(id) as { file_path: string } | undefined;
+    if (row === undefined) return null;
+    db.prepare("DELETE FROM draft_photos WHERE draft_id = ?").run(id);
+    return row.file_path;
+  })();
+}
+
+/** 기동 시 정리용: 모든 사진 행과 그 초안의 상태. */
+export function listDraftPhotos(db: Database.Database): { draftId: number; filePath: string; status: DraftStatus }[] {
+  const rows = db
+    .prepare("SELECT p.draft_id AS draft_id, p.file_path AS file_path, d.status AS status FROM draft_photos p JOIN drafts d ON d.id = p.draft_id")
+    .all() as { draft_id: number; file_path: string; status: string }[];
+  return rows.map((row) => ({ draftId: row.draft_id, filePath: row.file_path, status: row.status as DraftStatus }));
 }
 
 /** REQ-004: 승인을 기다리는 초안(drafting + awaiting_approval) 수. */

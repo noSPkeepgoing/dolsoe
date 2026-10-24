@@ -11,7 +11,9 @@ import { createMessenger } from "./bot/telegram.js";
 import { loadConfig, requireDailyDraftKeys } from "./config.js";
 import { markUpdateProcessed, openDb } from "./db.js";
 import { recoverStuckDrafts } from "./draft/approval.js";
-import { createApprovalStore, createDraftStore, createPublishStore } from "./draft/store.js";
+import { sweepMedia, type MediaDeps } from "./draft/media.js";
+import { createMediaFiles, createTelegramDownloader } from "./draft/media-files.js";
+import { createApprovalStore, createDraftStore, createMediaStore, createPublishStore } from "./draft/store.js";
 import { runDailyDraft } from "./jobs/daily-draft.js";
 import { createBodyGenerator } from "./llm/body-generator.js";
 import { createReviewCollector } from "./llm/review-collector.js";
@@ -60,8 +62,17 @@ async function main(): Promise<void> {
     notify: messenger.notify,
     notifyFailure: messenger.notifyFailure,
   };
+  const media: MediaDeps = {
+    store: createMediaStore(db, now),
+    files: createMediaFiles(config.MEDIA_DIR),
+    notify: messenger.notify,
+    askAttach: messenger.askAttach,
+    deliverCard: messenger.deliverCard,
+  };
   registerHandlers(bot, {
     approval,
+    media,
+    downloadFile: createTelegramDownloader(bot.api, config.TELEGRAM_BOT_TOKEN),
     publish,
     link: { now, generator, store, resolveYes24: (itemId) => yes24.fetchItem(itemId), reviewCollector, onReviewFailure, ...messenger },
   });
@@ -69,6 +80,7 @@ async function main(): Promise<void> {
   // 수정 중 재시작으로 멈춘 초안을 먼저 되돌린다(안 그러면 승인 대기 상한을 계속 차지한다).
   await recoverStuckDrafts(approval);
   await recoverStuckPublishing(publish);
+  await sweepMedia(media); // 종료된 초안의 사진·고아 파일 정리(REQ-034)
 
   const scheduler = createScheduler({
     db,

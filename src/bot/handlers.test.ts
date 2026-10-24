@@ -4,10 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { DraftBody, Product } from "@contract/domain.js";
 import { DISCLOSURE_TEXTS } from "@contract/domain.js";
 
-import { getDraft, insertDraft, openDb } from "../db.js";
+import { getDraft, insertDraft, openDb, type NewDraft } from "../db.js";
 import type { ApprovalDeps } from "../draft/approval.js";
+import type { MediaDeps, MediaFiles } from "../draft/media.js";
 import { expectedExperienceLine, type BodyGenerator, type GenerateBodyInput } from "../draft/generate.js";
-import { createApprovalStore, createDraftStore, createPublishStore } from "../draft/store.js";
+import { createApprovalStore, createDraftStore, createMediaStore, createPublishStore } from "../draft/store.js";
 import type { LinkDraftDeps } from "../jobs/link-draft.js";
 import { createHandoffPublisher } from "../publish/handoff.js";
 import type { PublishDeps } from "../publish/orchestrator.js";
@@ -58,6 +59,16 @@ interface ApiCall {
   payload: Record<string, unknown>;
 }
 
+const baseDraft = (): NewDraft => ({
+  category: "book",
+  mode: "daily",
+  status: "awaiting_approval",
+  products: [product("1")],
+  body: { category: "book", title: "원본", synopsis: "s", mood: "m", recommendedFor: "r", highlights: "h", experienceLine: null },
+  memo: null,
+  quality: { bannedPhrasesFound: [], hasExperienceLine: false },
+});
+
 function setup(makePublishers: (sendChunk: (text: string) => Promise<void>) => Publisher[] = (sendChunk) => [createHandoffPublisher({ sendChunk })]) {
   const db = openDb(":memory:");
   const draft = insertDraft(
@@ -105,7 +116,20 @@ function setup(makePublishers: (sendChunk: (text: string) => Promise<void>) => P
     notify: messenger.notify,
     deliverCard: messenger.deliverCard,
   };
-  registerHandlers(bot, { approval, publish, link });
+  const disk = new Map<string, number>(); // 가짜 디스크: 경로 → 바이트 수
+  let fileSeq = 0;
+  const files: MediaFiles = {
+    save: async (bytes) => {
+      const filePath = `/media/${++fileSeq}.jpg`;
+      disk.set(filePath, bytes.byteLength);
+      return filePath;
+    },
+    remove: async (filePath) => void disk.delete(filePath),
+    list: async () => [...disk.keys()],
+  };
+  const media: MediaDeps = { store: createMediaStore(db, () => NOW), files, notify: messenger.notify, askAttach: messenger.askAttach, deliverCard: messenger.deliverCard };
+  const photoBytes = new Uint8Array(1000);
+  registerHandlers(bot, { approval, publish, link, media, downloadFile: async () => photoBytes });
 
   let updateId = 1;
   const user = { id: OWNER, is_bot: false, first_name: "나" };
@@ -119,6 +143,19 @@ function setup(makePublishers: (sendChunk: (text: string) => Promise<void>) => P
       bot.handleUpdate({
         update_id: updateId++,
         callback_query: { id: `cb${updateId}`, from: user, chat_instance: "ci", data, message: { message_id: 7, date: 0, chat, text: "card" } },
+      }),
+    disk,
+    secondDraft: (overrides: Partial<NewDraft> = {}) =>
+      insertDraft(db, { ...baseDraft(), products: [product("2")], ...overrides }, NOW),
+    sendPhoto: () =>
+      bot.handleUpdate({
+        update_id: updateId++,
+        message: { message_id: updateId, date: 0, chat, from: user, photo: [{ file_id: "small", file_unique_id: "s", width: 90, height: 90 }, { file_id: "big", file_unique_id: "b", width: 900, height: 900 }] },
+      }),
+    sendDocument: (mime: string) =>
+      bot.handleUpdate({
+        update_id: updateId++,
+        message: { message_id: updateId, date: 0, chat, from: user, document: { file_id: "doc", file_unique_id: "d", mime_type: mime } },
       }),
     say: (text: string) => bot.handleUpdate({ update_id: updateId++, message: { message_id: updateId, date: 0, chat, from: user, text } }),
     sent: () => calls.filter((c) => c.method === "sendMessage").map((c) => String(c.payload["text"])),
@@ -203,10 +240,119 @@ describe("registerHandlers", () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM drafts").get()).toEqual({ n: 1 });
   });
 
-  it("[REQ-006] 링크도 수정 대기도 아닌 일반 메시지에는 사용법을 안내한다", async () => {
-    const { say, sent } = setup();
-    await say("안녕");
-    expect(sent()[0]).toContain("링크");
+  it("[REQ-034] 링크도 수정 대기도 아닌 일반 텍스트는 메모로 보고 어느 글에 붙일지 대기 초안 버튼으로 묻는다", async () => {
+    const { say, calls, draft, secondDraft } = setup();
+    const second = secondDraft();
+    await say("소음이 생각보다 컸어요");
+    const ask = calls.filter((c) => c.method === "sendMessage").at(-1)!;
+    const markup = JSON.stringify(ask.payload["reply_markup"]);
+    expect(String(ask.payload["text"])).toContain("어느 글에");
+    expect(markup).toContain(`attach`);
+    expect(markup).toContain(`\\"draftId\\":${draft.id}`);
+    expect(markup).toContain(`\\"draftId\\":${second.id}`);
+    expect(markup).toContain("attach_cancel");
+  });
+
+  it("[REQ-034] 메모를 붙이면 그 초안의 경험 한 줄이 되고 다시 보내면 교체된다 (다른 초안은 그대로)", async () => {
+    const { say, tap, db, draft, secondDraft } = setup();
+    const second = secondDraft();
+    await say("첫 메모");
+    await tap(JSON.stringify({ action: "attach", draftId: draft.id }));
+    expect(getDraft(db, draft.id)).toMatchObject({ body: { experienceLine: "첫 메모" }, quality: { hasExperienceLine: true } });
+    expect(getDraft(db, second.id)?.body).toMatchObject({ experienceLine: null });
+
+    await say("고친 메모");
+    await tap(JSON.stringify({ action: "attach", draftId: draft.id }));
+    expect(getDraft(db, draft.id)?.body).toMatchObject({ experienceLine: "고친 메모" });
+  });
+
+  it("[REQ-034] 사진을 붙이면 카드가 '내 한 컷 있음'으로 다시 오고, 다시 보내면 교체되며 이전 파일이 지워진다", async () => {
+    const { sendPhoto, tap, db, draft, disk, sent } = setup();
+    await sendPhoto();
+    await tap(JSON.stringify({ action: "attach", draftId: draft.id }));
+    const first = getDraft(db, draft.id)?.photo?.filePath;
+    expect(first).toBeDefined();
+    expect(sent().at(-1)).toContain("내 한 컷 있음");
+
+    await sendPhoto();
+    await tap(JSON.stringify({ action: "attach", draftId: draft.id }));
+    const second = getDraft(db, draft.id)?.photo?.filePath;
+    expect(second).not.toBe(first);
+    expect([...disk.keys()]).toEqual([second]);
+  });
+
+  it("[REQ-034] 사진을 연달아 보내면 마지막 것만 남는다(EDGE-013)", async () => {
+    const { sendPhoto, tap, db, draft, disk } = setup();
+    await sendPhoto();
+    await sendPhoto();
+    expect(disk.size).toBe(1);
+    await tap(JSON.stringify({ action: "attach", draftId: draft.id }));
+    expect(getDraft(db, draft.id)?.photo).toMatchObject({ mime: "image/jpeg", bytes: 1000 });
+  });
+
+  it("[REQ-034] 취소 버튼은 대기 중인 사진을 버린다", async () => {
+    const { sendPhoto, tap, disk, draft, db } = setup();
+    await sendPhoto();
+    await tap(JSON.stringify({ action: "attach_cancel" }));
+    expect(disk.size).toBe(0);
+    await tap(JSON.stringify({ action: "attach", draftId: draft.id })); // 대기가 없으니 붙지 않는다
+    expect(getDraft(db, draft.id)?.photo ?? null).toBeNull();
+  });
+
+  it("[REQ-034] 붙일 대기 초안이 없으면 안내만 하고 파일을 저장하지 않는다 (EDGE-014: 폐기된 초안은 목록에 안 나온다)", async () => {
+    const { sendPhoto, say, tap, draft, disk, sent } = setup();
+    await tap(JSON.stringify({ action: "discard", draftId: draft.id }));
+    await sendPhoto();
+    await say("메모");
+    expect(disk.size).toBe(0);
+    expect(sent().filter((text) => text.includes("붙일 초안이 없어요"))).toHaveLength(2);
+  });
+
+  it("[REQ-034] 선택하는 사이 폐기된 초안에는 붙지 않고 남은 초안을 다시 묻는다", async () => {
+    const { sendPhoto, tap, draft, secondDraft, db, sent } = setup();
+    const second = secondDraft();
+    await sendPhoto();
+    await tap(JSON.stringify({ action: "discard", draftId: draft.id }));
+    await tap(JSON.stringify({ action: "attach", draftId: draft.id }));
+    expect(getDraft(db, draft.id)?.photo ?? null).toBeNull();
+    expect(sent().at(-2)).toContain("이미 처리");
+    await tap(JSON.stringify({ action: "attach", draftId: second.id }));
+    expect(getDraft(db, second.id)?.photo).not.toBeNull();
+  });
+
+  it("[REQ-034] 파일(document)로 보낸 사진은 안내 후 거절한다 (EDGE-018)", async () => {
+    const { sendDocument, sent, disk } = setup();
+    await sendDocument("image/heic");
+    expect(sent().at(-1)).toContain("파일");
+    expect(disk.size).toBe(0);
+  });
+
+  it("[REQ-034] 폐기하면 사진 파일도 삭제된다 (EDGE-017)", async () => {
+    const { sendPhoto, tap, draft, disk } = setup();
+    await sendPhoto();
+    await tap(JSON.stringify({ action: "attach", draftId: draft.id }));
+    expect(disk.size).toBe(1);
+    await tap(JSON.stringify({ action: "discard", draftId: draft.id }));
+    expect(disk.size).toBe(0);
+  });
+
+  it("[REQ-034] `수정`으로 다시 만들어도 사진과 붙인 메모가 유지된다 (EDGE-015)", async () => {
+    const { say, sendPhoto, tap, draft, db } = setup();
+    await sendPhoto();
+    await tap(JSON.stringify({ action: "attach", draftId: draft.id }));
+    await say("직접 쓴 메모");
+    await tap(JSON.stringify({ action: "attach", draftId: draft.id }));
+    await tap(JSON.stringify({ action: "revise", draftId: draft.id }));
+    await say("표를 더 간단히");
+    expect(getDraft(db, draft.id)).toMatchObject({ status: "awaiting_approval", body: { experienceLine: "직접 쓴 메모" } });
+    expect(getDraft(db, draft.id)?.photo).toBeTruthy();
+  });
+
+  it("[REQ-034] 수정 대기 중의 일반 텍스트는 메모가 아니라 수정 지시다 (입력 분기 ①)", async () => {
+    const { tap, say, draft, generator } = setup();
+    await tap(JSON.stringify({ action: "revise", draftId: draft.id }));
+    await say("표를 더 간단히");
+    expect(vi.mocked(generator.generateBody)).toHaveBeenCalledTimes(1);
   });
 
   it("[REQ-007] 알 수 없는 버튼 데이터는 서비스를 부르지 않고 콜백 응답만 한다(경계 검증)", async () => {
