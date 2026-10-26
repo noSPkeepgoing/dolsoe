@@ -39,6 +39,15 @@ function reviewLine(draft: Draft): string | null {
   return count > 0 ? `후기 ${count}건 참고` : "후기 근거 없음";
 }
 
+const QUOTE_ORIGIN_LABEL = { user: "직접 입력", web: "웹 2곳 확인", intro: "소개글" } as const;
+
+/** REQ-029: 책 초안의 필사 문구 출처. 문구가 없으면 사람에게 보내달라고 요청한다. 가전에는 줄이 없다. */
+function quoteLine(draft: Draft): string | null {
+  if (draft.category !== "book" || draft.body?.category !== "book") return null;
+  const quote = draft.body.quote;
+  return quote == null ? "필사 문구: 없음 — 문구를 보내주시면 넣을게요 (수정 → \"문구: …\")" : `필사 문구: ${QUOTE_ORIGIN_LABEL[quote.origin]}`;
+}
+
 /** REQ-028: 가전 초안의 스펙 출처 구분("직접 입력 / 웹 확인 N건 / 확인 못 함"). 책에는 줄이 없다. */
 function specLine(draft: Draft): string | null {
   if (draft.category !== "appliance") return null;
@@ -56,6 +65,7 @@ export function formatCard(draft: Draft): { text: string; buttons: CardButton[] 
       : `문체 점검 · 금지 표현 ${quality.bannedPhrasesFound.length + (quality.styleIssues?.length ?? 0)}개 · 경험 ${quality.hasExperienceLine ? "있음" : "없음"}`;
   const review = reviewLine(draft);
   const spec = specLine(draft);
+  const quote = quoteLine(draft);
   const tags = draft.body === null ? null : formatTags(draft.body);
   const text = [
     `📝 초안 #${draft.id} · ${CATEGORY_LABEL[draft.category]} · ${MODE_LABEL[draft.mode]}`,
@@ -66,6 +76,7 @@ export function formatCard(draft: Draft): { text: string; buttons: CardButton[] 
     productsLine(draft),
     ...(review === null ? [] : [review]),
     ...(spec === null ? [] : [spec]),
+    ...(quote === null ? [] : [quote]),
     ...(tags === null ? [] : [`태그: ${tags}`]),
     ...(draft.photo == null ? [] : ["내 한 컷 있음"]),
   ].join("\n");

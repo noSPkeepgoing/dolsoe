@@ -158,3 +158,13 @@ describe("근거 팩트 한 줄 (REQ-028)", () => {
     expect(text.match(/\(근거:/g)).toHaveLength(1);
   });
 });
+
+describe("필사 코너 텍스트 (REQ-029)", () => {
+  it("[REQ-029] 전달본에도 문구·출처가 들어가고 문구가 없으면 기존 소제목", () => {
+    const quote = { text: "오늘 하루도 충분히 애썼어요.", attribution: "— 『가호』, 하루키", origin: "web" as const };
+    const base: Draft = { id: 1, category: "book", mode: "daily", status: "awaiting_approval", products: [product("1")], body: { ...(bookBody() as Extract<DraftBody, { category: "book" }>), quote }, memo: null, quality: null, createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" };
+    const text = renderPostText(base);
+    expect(text).toContain("필사하고 싶은 한 줄\n“오늘 하루도 충분히 애썼어요.”\n— 『가호』, 하루키");
+    expect(renderPostText({ ...base, body: bookBody() })).toContain("인상 깊은 대목");
+  });
+});

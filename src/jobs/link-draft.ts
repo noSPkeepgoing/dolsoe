@@ -3,6 +3,7 @@ import { COUPANG_PARTNER_HOSTS, PRODUCTS_PER_DRAFT } from "@contract/domain.js";
 
 import { deliverCardSafely } from "../draft/deliver.js";
 import { generateDraftBody, type BodyGenerator } from "../draft/generate.js";
+import { gatherQuote, parseQuoteDirective, stripQuoteLine, type QuoteCollector } from "../draft/quote.js";
 import { gatherReviews, type ReviewCollector } from "../draft/review.js";
 import { gatherSpecs, type SpecCollector } from "../draft/spec.js";
 import { isBudgetExceeded } from "../llm/cost.js";
@@ -33,6 +34,9 @@ export interface LinkDraftDeps {
   reviewCollector?: ReviewCollector;
   onReviewFailure?: (reason: string) => void;
   /** REQ-028: 가전 스펙 수집기(웹 2곳 교차 확인). 없으면 사용자가 적은 스펙만 쓴다. */
+  /** REQ-029: 책 필사 문구 수집기(웹 2곳 교차 확인). 없으면 소개문·없음으로 만든다. */
+  quoteCollector?: QuoteCollector;
+  onQuoteFailure?: (reason: string) => void;
   specCollector?: SpecCollector;
   onSpecFailure?: (reason: string) => void;
 }
@@ -65,7 +69,10 @@ export async function runLinkDraft(deps: LinkDraftDeps, text: string): Promise<L
     );
   }
 
-  const { links, memo } = parsed;
+  // REQ-029 책 링크 메시지의 "문구: …" 줄은 메모가 아니라 사용자 필사 문구다(① 우선순위). 가전에서는 일반 메모로 둔다.
+  const directive = parsed.links[0]?.type === "yes24" ? parseQuoteDirective(text) : { kind: "none" as const };
+  const links = parsed.links;
+  const memo = directive.kind === "none" ? parsed.memo : parsed.memo === null ? null : stripQuoteLine(parsed.memo);
   const types = new Set(links.map((link) => link.type));
   if (types.size > 1) return skip("mixed", "쿠팡 링크와 YES24 링크는 한 종류씩 따로 보내주세요.");
 
@@ -92,6 +99,7 @@ export async function runLinkDraft(deps: LinkDraftDeps, text: string): Promise<L
   const specs = await gatherSpecs(category, resolved, deps.specCollector, deps.onSpecFailure);
   const products = specs.products;
   const reviews = await gatherReviews(category, products, deps.reviewCollector, deps.onReviewFailure);
+  const quote = await gatherQuote(category, products, directive.kind === "set" ? directive.text : null, deps.quoteCollector, deps.onQuoteFailure);
   let generated: Awaited<ReturnType<typeof generateDraftBody>>;
   try {
     generated = await generateDraftBody({
@@ -99,6 +107,7 @@ export async function runLinkDraft(deps: LinkDraftDeps, text: string): Promise<L
       category,
       products,
       memo,
+      ...(category === "book" ? { quote: quote.quote } : {}),
       ...(reviews.reviewNotes === undefined ? {} : { reviewNotes: reviews.reviewNotes }),
       ...(reviews.reviewExcerpts === undefined ? {} : { reviewExcerpts: reviews.reviewExcerpts }),
     });
@@ -116,6 +125,7 @@ export async function runLinkDraft(deps: LinkDraftDeps, text: string): Promise<L
       memo,
       quality: generated.quality,
       ...(reviews.reviewSources === undefined ? {} : { reviewSources: reviews.reviewSources }),
+      ...(quote.quoteSources === undefined ? {} : { quoteSources: quote.quoteSources }),
       ...(category === "appliance" ? { specOrigin: specs.specOrigin, ...(specs.specSources === undefined ? {} : { specSources: specs.specSources }) } : {}),
     },
     products,

@@ -225,7 +225,8 @@ export type DraftBody = z.infer<typeof DraftBodySchema>;
  * 저장 스키마(DraftBodySchema)는 옛 저장 행을 읽어야 해서 optional로 둔다.
  */
 export const ApplianceBodyGenSchema = ApplianceBodySchema.required({ keyword: true, intro: true, closing: true, tags: true });
-export const BookBodyGenSchema = BookBodySchema.required({ keyword: true, intro: true, closing: true, tags: true });
+// quote는 모델이 쓰지 못한다: 코드가 출처 텍스트에서 고른 문장만 넣는다(REQ-029, ADR-013).
+export const BookBodyGenSchema = BookBodySchema.required({ keyword: true, intro: true, closing: true, tags: true }).omit({ quote: true });
 
 /** REQ-032 제목에 쓰지 않는 문자: 이모지·장식 기호·괄호 장식. 이모지는 렌더러가 소제목에만 붙인다. */
 export const TITLE_FORBIDDEN_PATTERN = /[\p{Extended_Pictographic}★☆♥♡◆◇■□●○▶▷※【】\[\]]/u;
@@ -357,6 +358,8 @@ export const ReviseInstructionSchema = z.object({
   text: z.string().min(1),
   experienceLine: z.string().nullable(), // 파서가 지시문에서 추출한 경험 문장(없으면 null)
   clearExperience: z.boolean(), // "경험 한 줄: 없음" — 이전에 넣은 경험 문장을 지운다
+  quote: z.string().nullable().optional(), // REQ-029 "문구: …" — 사용자가 보낸 필사 문구(없으면 이전 문구 유지)
+  clearQuote: z.boolean().optional(), // "문구: 없음" — 필사 코너를 뺀다
 });
 export type ReviseInstruction = z.infer<typeof ReviseInstructionSchema>;
 

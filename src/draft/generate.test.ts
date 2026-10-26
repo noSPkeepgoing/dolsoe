@@ -310,4 +310,43 @@ describe("generateDraftBody — 문체 점검(REQ-030)", () => {
       expect(stuck.quality.styleIssues).toEqual([expect.stringContaining("추측 표지")]);
     });
   });
+
+  describe("필사 문구 (REQ-029)", () => {
+    const QUOTE = { text: "오늘 하루도 충분히 애썼어요.", attribution: "— 『가호』, 하루키", origin: "web" as const };
+    const bookProduct: Product = { ...product("1"), source: "yes24", category: "book", affiliate: "yes24", title: "가호" };
+    const base = (over: Partial<BookBody> = {}): BookBody => ({
+      category: "book", title: "가호 추천", synopsis: "줄거리예요.", mood: "잔잔해요.", recommendedFor: "누구나요.", highlights: "이유예요.", experienceLine: null, ...over,
+    });
+    const run = (generator: BodyGenerator, extra: Partial<Parameters<typeof generateDraftBody>[0]> = {}) =>
+      generateDraftBody({ generator, category: "book", products: [bookProduct], memo: null, ...extra });
+
+    it("[REQ-029] 고른 문구가 생성기에 넘어가고, 모델이 quote를 지어 써도 코드가 덮어쓴다", async () => {
+      const invented = base({ quote: { text: "기억에서 꺼낸 문장이에요.", attribution: "— 누군가", origin: "web" } });
+      const generator = generatorReturning(invented);
+      const result = await run(generator, { quote: QUOTE });
+      expect((generator.generateBody.mock.calls[0]![0] as { quote: unknown }).quote).toEqual(QUOTE);
+      expect(result.body).toMatchObject({ quote: QUOTE });
+    });
+
+    it("[REQ-029] 문구가 없으면 본문에도 quote 키가 없다(코너 생략)", async () => {
+      const result = await run(generatorReturning(base({ quote: QUOTE })), { quote: null });
+      expect("quote" in result.body).toBe(false);
+    });
+
+    it("[REQ-029][REQ-030] 출처에서 온 문구는 체험 어미가 있어도 문체·체험·복사 검사에서 빠진다 (본문에 있으면 걸릴 문장)", async () => {
+      const quote = { ...QUOTE, text: "그 책을 읽고 나서 울컥했어요 써봤더니 좋더라고요." };
+      const result = await run(generatorReturning(base()), { quote });
+      expect(result.quality.styleIssues).toEqual([]);
+      expect(result.quality.bannedPhrasesFound).toEqual([]);
+    });
+
+    it("[REQ-029] 수정(revision)은 새 문구가 없으면 이전 문구를 유지하고, 새 문구면 교체, null이면 제거한다 (EDGE: 수정 시 이전 인용문 유지)", async () => {
+      const previous = base({ quote: QUOTE });
+      const rev = (over: Record<string, unknown> = {}) => ({ previousBody: previous, instruction: "표 간단히", experienceLine: null, ...over });
+      expect((await run(generatorReturning(base()), { revision: rev() })).body).toMatchObject({ quote: QUOTE });
+      const newer = { text: "내가 고른 문장", attribution: "— 『가호』", origin: "user" as const };
+      expect((await run(generatorReturning(base()), { revision: rev({ quote: newer }) })).body).toMatchObject({ quote: newer });
+      expect("quote" in (await run(generatorReturning(base()), { revision: rev({ quote: null }) })).body).toBe(false);
+    });
+  });
 });

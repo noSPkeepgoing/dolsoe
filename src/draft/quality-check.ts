@@ -19,7 +19,7 @@ import {
 const EXCLUDED_KEYS = new Set(["experienceLine", "category"]);
 
 /** `quote.text`는 출처에서 글자 그대로 검증된 문장(`trustedQuote`)과 같을 때만 검사에서 뺀다(ADR-012). */
-interface CollectOptions {
+export interface CollectOptions {
   trustedQuote?: string | null;
 }
 
@@ -83,7 +83,7 @@ export function checkQuality(body: DraftBody, options: CollectOptions = {}): Qua
  * REQ-032·031: 제목(키워드 앞·1회·길이·이모지 없음)·태그(개수·# 없음·중복 없음)·본문 이모지 검사. 문제 문장은 재생성 프롬프트에 그대로 들어간다.
  * 새 필드(`keyword`·`tags`)가 없는 옛 저장 본문은 건너뛴다 — 새로 만드는 본문은 LLM 스키마가 필드를 필수로 받는다(ADR-011).
  */
-export function findFormatProblems(body: DraftBody): string[] {
+export function findFormatProblems(body: DraftBody, options: CollectOptions = {}): string[] {
   const problems: string[] = [];
   const { keyword, title, tags } = body;
   if (keyword !== undefined) {
@@ -100,15 +100,15 @@ export function findFormatProblems(body: DraftBody): string[] {
     if (new Set(tags).size !== tags.length) problems.push("태그에 중복이 있습니다");
   }
   const texts: string[] = [];
-  collectBotText(body, texts);
+  collectBotText(body, texts, options);
   if (texts.some((text) => EMOJI_PATTERN.test(text))) problems.push("본문에 이모지를 쓰지 마세요. 이모지는 시스템이 소제목에 넣습니다");
   return problems;
 }
 
 /** REQ-011: 봇이 지어낸 후기·경험 표현(걸린 부분 문자열). 사용자가 준 경험 문장은 제외한다. */
-export function findExperienceClaims(body: DraftBody): string[] {
+export function findExperienceClaims(body: DraftBody, options: CollectOptions = {}): string[] {
   const texts: string[] = [];
-  collectBotText(body, texts);
+  collectBotText(body, texts, options);
   const joined = texts.join("\n");
   return EXPERIENCE_CLAIM_PATTERNS.flatMap((pattern) => {
     const match = pattern.exec(joined);
@@ -161,10 +161,10 @@ function sharesVerbatimRun(text: string, source: string, minChars: number): bool
  * 책 제목·저자처럼 원래 겹치는 고유명은 비교 전에 뺀다. 사용자가 준 경험 문장은 검사 제외(REQ-011).
  * 후기 원문은 웹검색 인용의 `cited_text` 조각(reviewExcerpts)으로만 대조한다 — 인용되지 않은 후기 문장은 기계로 볼 수 없어 프롬프트 규칙과 사람의 승인이 맡는다.
  */
-export function findCopyProblems(body: DraftBody, products: readonly Product[], reviewExcerpts: readonly string[] = []): string[] {
+export function findCopyProblems(body: DraftBody, products: readonly Product[], reviewExcerpts: readonly string[] = [], options: CollectOptions = {}): string[] {
   if (body.category !== "book") return [];
   const texts: string[] = [];
-  collectBotText(body, texts);
+  collectBotText(body, texts, options);
   const joined = texts.join("\n");
 
   const problems: string[] = [];

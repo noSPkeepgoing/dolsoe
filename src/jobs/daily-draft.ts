@@ -4,6 +4,7 @@ import { DEDUP_DAYS, PRODUCTS_PER_DRAFT } from "@contract/domain.js";
 import type { NewDraft } from "../db.js";
 import { deliverCardSafely } from "../draft/deliver.js";
 import { generateDraftBody, type BodyGenerator } from "../draft/generate.js";
+import { gatherQuote, type QuoteCollector } from "../draft/quote.js";
 import { gatherReviews, type ReviewCollector } from "../draft/review.js";
 import { filterRecentlyCovered, isPendingCapReached, nextCategory } from "../draft/rules.js";
 import { isBudgetExceeded } from "../llm/cost.js";
@@ -41,6 +42,9 @@ export async function runDailyDraft(deps: {
   reviewCollector?: ReviewCollector;
   /** 후기 수집이 실패했을 때 이유를 남기는 곳(초안은 계속 만든다). */
   onReviewFailure?: (reason: string) => void;
+  /** REQ-029: 책 필사 문구 수집기. 없으면 소개문·없음으로 만든다. */
+  quoteCollector?: QuoteCollector;
+  onQuoteFailure?: (reason: string) => void;
 }): Promise<DailyDraftResult> {
   const { now, sources, generator, store, notify } = deps;
   const skip = async (reason: SkipReason, text: string): Promise<DailyDraftResult> => {
@@ -78,6 +82,7 @@ export async function runDailyDraft(deps: {
   const picked = fresh.slice(0, needed);
 
   const reviews = await gatherReviews(category, picked, deps.reviewCollector, deps.onReviewFailure);
+  const quote = await gatherQuote(category, picked, null, deps.quoteCollector, deps.onQuoteFailure);
   let generated: Awaited<ReturnType<typeof generateDraftBody>>;
   try {
     generated = await generateDraftBody({
@@ -85,6 +90,7 @@ export async function runDailyDraft(deps: {
       category,
       products: picked,
       memo: null,
+      ...(category === "book" ? { quote: quote.quote } : {}),
       ...(reviews.reviewNotes === undefined ? {} : { reviewNotes: reviews.reviewNotes }),
       ...(reviews.reviewExcerpts === undefined ? {} : { reviewExcerpts: reviews.reviewExcerpts }),
     });
@@ -102,6 +108,7 @@ export async function runDailyDraft(deps: {
       memo: null,
       quality: generated.quality,
       ...(reviews.reviewSources === undefined ? {} : { reviewSources: reviews.reviewSources }),
+      ...(quote.quoteSources === undefined ? {} : { quoteSources: quote.quoteSources }),
     },
     picked,
   );

@@ -1,6 +1,8 @@
 import type { ReviseInstruction } from "@contract/domain.js";
 import { ReviseInstructionSchema } from "@contract/domain.js";
 
+import { parseQuoteDirective } from "./quote.js";
+
 /** "경험 한 줄: …" / "경험한줄： …" — 이 줄만 경험 문장으로 뽑는다(REQ-011, 별도 버튼 없이 수정 지시로 받는다). */
 /** "경험 한 줄: 없음"만 지우기 명령이다. 더 긴 문장의 일부로 쓰인 "없음"은 문장 그대로 둔다. */
 const CLEAR_KEYWORD = "없음";
@@ -14,5 +16,13 @@ export function parseReviseInstruction(draftId: number, text: string): ReviseIns
   const matched = EXPERIENCE_LINE.exec(text)?.[1]?.trim() ?? "";
   const clearExperience = matched === CLEAR_KEYWORD;
   const isSentence = matched.length > 0 && !clearExperience;
-  return ReviseInstructionSchema.parse({ draftId, text, experienceLine: isSentence ? matched : null, clearExperience });
+  const quote = parseQuoteDirective(text); // REQ-029 "문구: …" / "문구: 없음"
+  return ReviseInstructionSchema.parse({
+    draftId,
+    text,
+    experienceLine: isSentence ? matched : null,
+    clearExperience,
+    quote: quote.kind === "set" ? quote.text : null,
+    clearQuote: quote.kind === "clear",
+  });
 }

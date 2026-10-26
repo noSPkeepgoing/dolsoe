@@ -69,6 +69,11 @@ export function buildPrompt(input: GenerateBodyInput): { system: string; user: s
         : `<facts>\n${facts.map((fact) => `- ${fact.id}: ${fact.text}`).join("\n")}\n</facts>`,
     );
   }
+  if (input.category === "book" && input.quote != null) {
+    sections.push(
+      `필사 문구(시스템이 출처 텍스트에서 골랐습니다. 이 문장을 본문 어디에도 다시 쓰거나 고치지 마세요):\n<quote>\n${input.quote.text}\n${input.quote.attribution}\n</quote>\nhighlights에는 "이 문장이 필사하기 좋은 이유"를 자기 말로 한두 문장 쓰세요. 문장을 인용하거나 따옴표로 옮기지 말고, 그 문장 밖의 장면·내용을 지어내지 않습니다.`,
+    );
+  }
   if (input.category === "book") {
     const hasNotes = input.reviewNotes !== undefined && input.reviewNotes.trim().length > 0;
     if (hasNotes) {

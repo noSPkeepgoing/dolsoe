@@ -180,4 +180,13 @@ describe("buildPrompt — 경험 지우기", () => {
     expect(buildPrompt({ ...applianceBase, facts: [] }).user).toContain("근거 팩트가 없습니다");
     expect(buildPrompt(base).user).not.toContain("<facts>");
   });
+
+  it("[REQ-029] 책 프롬프트에 고른 필사 문구와 '이 문장이 필사하기 좋은 이유' 지시가 들어가고, 문구가 없으면 들어가지 않는다", () => {
+    const withQuote = buildPrompt({ ...base, quote: { text: "오늘 하루도 충분히 애썼어요.", attribution: "— 『가호』, 하루키", origin: "web" as const } });
+    expect(withQuote.user).toContain("<quote>");
+    expect(withQuote.user).toContain("오늘 하루도 충분히 애썼어요.");
+    expect(withQuote.user).toContain("필사하기 좋은 이유");
+    expect(buildPrompt({ ...base, quote: null }).user).not.toContain("<quote>");
+    expect(buildPrompt(base).user).not.toContain("<quote>");
+  });
 });

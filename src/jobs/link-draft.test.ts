@@ -6,6 +6,7 @@ import { MAX_PENDING_DRAFTS, MONTHLY_LLM_BUDGET_KRW, PRODUCTS_PER_DRAFT } from "
 import type { NewDraft } from "../db.js";
 import type { BodyGenerator, GenerateBodyInput } from "../draft/generate.js";
 import type { ReviewCollector } from "../draft/review.js";
+import type { QuoteCollector } from "../draft/quote.js";
 import type { SpecCollector } from "../draft/spec.js";
 
 import type { DraftStore } from "./daily-draft.js";
@@ -47,7 +48,7 @@ const bodyFor = (input: GenerateBodyInput): DraftBody =>
         experienceLine: null,
       };
 
-function setup(over: { costKrw?: number; pending?: number; resolveYes24?: (id: string) => Promise<Product>; generator?: BodyGenerator; reviewCollector?: ReviewCollector; specCollector?: SpecCollector } = {}) {
+function setup(over: { costKrw?: number; pending?: number; resolveYes24?: (id: string) => Promise<Product>; generator?: BodyGenerator; reviewCollector?: ReviewCollector; specCollector?: SpecCollector; quoteCollector?: QuoteCollector } = {}) {
   const saved: NewDraft[] = [];
   const store: DraftStore = {
     countPending: () => over.pending ?? 0,
@@ -64,7 +65,7 @@ function setup(over: { costKrw?: number; pending?: number; resolveYes24?: (id: s
   const deliverCard = vi.fn<(draft: Draft) => Promise<void>>(async () => {});
   const resolveYes24 = over.resolveYes24 ?? vi.fn(async (id: string) => yes24Product(id));
   const run = (text: string) =>
-    runLinkDraft({ now: () => NOW, store, generator, resolveYes24, notify, deliverCard, ...(over.reviewCollector === undefined ? {} : { reviewCollector: over.reviewCollector }), ...(over.specCollector === undefined ? {} : { specCollector: over.specCollector }) }, text);
+    runLinkDraft({ now: () => NOW, store, generator, resolveYes24, notify, deliverCard, ...(over.reviewCollector === undefined ? {} : { reviewCollector: over.reviewCollector }), ...(over.specCollector === undefined ? {} : { specCollector: over.specCollector }), ...(over.quoteCollector === undefined ? {} : { quoteCollector: over.quoteCollector }) }, text);
   return { saved, notify, deliverCard, generator, resolveYes24, run };
 }
 
@@ -233,6 +234,45 @@ describe("runLinkDraft", () => {
       await run(YES24);
       expect(specCollector.collect).not.toHaveBeenCalled();
       expect(saved[0]!.specOrigin).toBeUndefined();
+    });
+  });
+
+  describe("필사 문구 (REQ-029)", () => {
+    const SENTENCE = "오늘 하루도 충분히 애썼어요.";
+    const quoteCollector = (sites: number): QuoteCollector => ({
+      collect: vi.fn(async () => ({
+        candidates: [SENTENCE],
+        evidence: Array.from({ length: sites }, (_, i) => ({ url: `https://site${i}.example/p`, excerpt: SENTENCE })),
+      })),
+    });
+
+    it("[REQ-029] 책 링크 메시지의 '문구:' 줄은 사용자 문구로 쓰이고 메모에서는 빠지며 검색하지 않는다", async () => {
+      const c = quoteCollector(2);
+      const { saved, generator, run } = setup({ quoteCollector: c });
+      await run(`${YES24}\n잔잔한 책이면 좋겠어요\n문구: “내가 고른 문장이에요.”`);
+      expect(c.collect).not.toHaveBeenCalled();
+      expect(saved[0]).toMatchObject({ memo: "잔잔한 책이면 좋겠어요", body: { quote: { text: "내가 고른 문장이에요.", origin: "user" } } });
+      expect(vi.mocked(generator.generateBody).mock.calls[0]![0]).toMatchObject({ memo: "잔잔한 책이면 좋겠어요" });
+    });
+
+    it("[REQ-029] 문구를 안 주면 웹 2곳 확인 문장이 들어가고 출처 URL은 quoteSources에만 남는다", async () => {
+      const { saved, run } = setup({ quoteCollector: quoteCollector(2) });
+      await run(YES24);
+      expect(saved[0]).toMatchObject({ body: { quote: { text: SENTENCE, origin: "web" } }, quoteSources: ["https://site0.example/p", "https://site1.example/p"] });
+      expect(JSON.stringify(saved[0]!.body)).not.toContain("site0.example");
+    });
+
+    it("[REQ-029] 웹 1곳만 확인되고 소개문도 없으면 문구 없이(코너 생략) 만든다", async () => {
+      const { saved, run } = setup({ quoteCollector: quoteCollector(1) });
+      await run(YES24);
+      expect("quote" in saved[0]!.body!).toBe(false);
+      expect(saved[0]!.quoteSources).toBeUndefined();
+    });
+
+    it("[REQ-029] 가전 링크의 '문구:' 줄은 필사 문구가 아니라 일반 메모다", async () => {
+      const { saved, run } = setup();
+      await run(`${COUPANG}\n제품 / 100000원\n문구: 이건 메모`);
+      expect(saved[0]!.memo).toBe("문구: 이건 메모");
     });
   });
 });

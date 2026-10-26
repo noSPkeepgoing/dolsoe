@@ -63,6 +63,18 @@ describe("formatCard — 스펙 출처 (REQ-028)", () => {
   });
 });
 
+describe("formatCard — 필사 문구 (REQ-029)", () => {
+  const withQuote = (origin: "user" | "web" | "intro" | null) =>
+    draft({ body: { ...(body() as Extract<DraftBody, { category: "book" }>), ...(origin === null ? {} : { quote: { text: "문장", attribution: "— 출처", origin } }) } });
+
+  it("[REQ-029] 책 카드에 필사 문구 출처가 보이고, 없으면 문구를 보내달라고 요청한다 (EDGE-020)", () => {
+    expect(formatCard(withQuote("user")).text).toContain("필사 문구: 직접 입력");
+    expect(formatCard(withQuote("web")).text).toContain("필사 문구: 웹 2곳 확인");
+    expect(formatCard(withQuote("intro")).text).toContain("필사 문구: 소개글");
+    expect(formatCard(withQuote(null)).text).toContain("문구를 보내주시면 넣을게요");
+  });
+});
+
 describe("formatCard", () => {
   it("[REQ-007] 본문 미리보기와 `발행 / 수정 / 폐기` 버튼 3개가 함께 보인다", () => {
     const { text, buttons } = formatCard(draft());

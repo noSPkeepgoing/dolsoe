@@ -36,7 +36,9 @@ function renderBody(body: DraftBody, products: readonly Product[]): string[] {
     `줄거리\n${body.synopsis}`,
     `분위기\n${body.mood}`,
     `이런 사람에게\n${body.recommendedFor}`,
-    `인상 깊은 대목\n${body.highlights}`,
+    body.quote == null
+      ? `인상 깊은 대목\n${body.highlights}`
+      : [body.quote.origin === "intro" ? "이 책 속 한 줄" : "필사하고 싶은 한 줄", `“${body.quote.text}”`, body.quote.attribution, body.highlights].join("\n"),
     ...(body.closing === undefined ? [] : [body.closing]),
   ];
 }

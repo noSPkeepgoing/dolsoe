@@ -4,6 +4,7 @@ import { isBudgetExceeded } from "../llm/cost.js";
 
 import { deliverCardSafely } from "./deliver.js";
 import { generateDraftBody, type BodyGenerator } from "./generate.js";
+import { userQuote } from "./quote.js";
 import { parseReviseInstruction } from "./revise.js";
 
 /** 승인 흐름이 필요로 하는 저장소 경계. 실제 구현은 draft/store.ts(SQLite), 상태 전이는 전부 CAS(ADR-006). */
@@ -91,6 +92,12 @@ export async function submitRevision(deps: ApprovalDeps, text: string): Promise<
         instruction: instruction.text,
         experienceLine: instruction.experienceLine,
         clearExperience: instruction.clearExperience,
+        // REQ-029: "문구: …"는 새 사용자 문구, "문구: 없음"은 코너 제거, 없으면 이전 문구를 그대로 유지한다.
+        ...(instruction.clearQuote === true
+          ? { quote: null }
+          : instruction.quote != null && draft.products[0] !== undefined
+            ? { quote: userQuote(instruction.quote, draft.products[0]) }
+            : {}),
       },
     });
     if (!store.saveRevision(id, body, quality)) throw new Error("수정 결과를 저장하지 못했습니다");

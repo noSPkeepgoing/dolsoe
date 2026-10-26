@@ -296,3 +296,27 @@ describe("missingTexts — 에디터 화면에서 반드시 있어야 할 문구
     expect(missingTexts("제목\n줄거리 문단이에요", [DISCLOSURE_TEXTS.yes24])).toEqual([DISCLOSURE_TEXTS.yes24]);
   });
 });
+
+describe("필사 코너 (REQ-029)", () => {
+  const quote = { text: "오늘 하루도 충분히 애썼어요.", attribution: "— 『가호』, 하루키", origin: "web" as const };
+
+  it("[REQ-029] 문구가 있으면 '필사하고 싶은 한 줄' 소제목 아래에 문구·출처·이유가 들어가고 '인상 깊은 대목'은 빠진다", () => {
+    const html = renderNaverHtml(draft(bookBody({ quote, highlights: "짧고 또렷해서 필사하기 좋아요" }), [product("1")]));
+    expect(html).toContain("필사하고 싶은 한 줄");
+    expect(html).toContain(quote.text);
+    expect(html).toContain("— 『가호』, 하루키");
+    expect(html).not.toContain("인상 깊은 대목");
+  });
+
+  it("[REQ-029] 소개문에서 온 문구는 소제목이 '이 책 속 한 줄'이다 (출처를 정직하게)", () => {
+    const html = renderNaverHtml(draft(bookBody({ quote: { ...quote, origin: "intro", attribution: "— 『가호』 소개글 중" } }), [product("1")]));
+    expect(html).toContain("이 책 속 한 줄");
+    expect(html).not.toContain("필사하고 싶은 한 줄");
+  });
+
+  it("[REQ-029] 문구가 없으면 코너를 빼고 기존 '인상 깊은 대목'을 쓴다", () => {
+    const html = renderNaverHtml(draft(bookBody({ highlights: "목차의 구성이 눈에 띄어요" }), [product("1")]));
+    expect(html).toContain("인상 깊은 대목");
+    expect(html).not.toContain("필사");
+  });
+});

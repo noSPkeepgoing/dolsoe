@@ -384,4 +384,20 @@ describe("registerHandlers", () => {
     await say("그냥 한마디");
     expect(vi.mocked(generator.generateBody)).toHaveBeenCalledTimes(1); // 수정 지시로 쓰이지 않음
   });
+
+  it("[REQ-029] `수정`에서 '문구: …'를 보내면 그 문구가 필사 코너가 되고, 이후 일반 수정은 문구를 유지하며, '문구: 없음'은 코너를 뺀다", async () => {
+    const { tap, say, draft, db } = setup();
+    const revise = () => tap(JSON.stringify({ action: "revise", draftId: draft.id }));
+    await revise();
+    await say("문구: 내가 고른 문장이에요."); // (가짜 생성기가 지시문을 제목에 넣으므로 따옴표 없이)
+    expect(getDraft(db, draft.id)?.body).toMatchObject({ quote: { text: "내가 고른 문장이에요.", origin: "user", attribution: "— 『책 1』" } });
+
+    await revise();
+    await say("표를 더 간단히");
+    expect(getDraft(db, draft.id)?.body).toMatchObject({ quote: { text: "내가 고른 문장이에요." } });
+
+    await revise();
+    await say("문구: 없음");
+    expect("quote" in getDraft(db, draft.id)!.body!).toBe(false);
+  });
 });

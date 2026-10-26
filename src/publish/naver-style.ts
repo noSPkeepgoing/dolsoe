@@ -158,6 +158,16 @@ function linkSentences(kit: StyleKit, products: readonly Product[]): string {
 /** 섹션 = 소제목 하나와 그 내용. 섹션 사이는 구분선이 아니라 빈 줄이다. */
 type Section = string[];
 
+/**
+ * 필사 코너(REQ-029): 문구가 있으면 문구 박스 + 출처 + "이 문장이 필사하기 좋은 이유"(highlights). 소개문에서 온 문구는 소제목을 "이 책 속 한 줄"로 바꿔 출처를 정직하게 보인다.
+ * 문구가 없으면 기존 "인상 깊은 대목"이다.
+ */
+function quoteSection(kit: StyleKit, body: Extract<DraftBody, { category: "book" }>): Section {
+  const quote = body.quote;
+  if (quote == null) return [kit.heading("인상 깊은 대목"), kit.paragraph(body.highlights)];
+  return [kit.heading(quote.origin === "intro" ? "이 책 속 한 줄" : "필사하고 싶은 한 줄"), kit.callout(quote.text), kit.note(quote.attribution), kit.paragraph(body.highlights)];
+}
+
 /** 책: 맨 위 인용구(도입) → 도서 정보 표 → 줄거리 → 분위기 → 이런 사람에게 → 인상 깊은 대목. */
 function bookSections(kit: StyleKit, body: Extract<DraftBody, { category: "book" }>, products: readonly Product[]): Section[] {
   const product = products[0];
@@ -170,7 +180,7 @@ function bookSections(kit: StyleKit, body: Extract<DraftBody, { category: "book"
     [kit.heading("줄거리"), kit.paragraph(body.synopsis)],
     [kit.heading("분위기"), kit.highlightedParagraph(body.mood)],
     [kit.heading("이런 사람에게"), kit.highlightedParagraph(body.recommendedFor)],
-    [kit.heading("인상 깊은 대목"), kit.paragraph(body.highlights)],
+    quoteSection(kit, body),
   ];
 }
 
