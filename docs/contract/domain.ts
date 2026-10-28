@@ -84,6 +84,7 @@ export const TITLE_MAX_CHARS = 30; // REQ-032 제목 길이 상한("25자 안팎
 export const TAGS_MIN = 3; // REQ-032 태그 개수 범위(목표 5개 내외)
 export const TAGS_MAX = 8;
 export const QUOTE_MAX_CHARS = 100; // REQ-029 필사 문구 길이 상한(1~2문장)
+export const SPEC_KEY_WINDOW_CHARS = 12; // REQ-028 스펙 값은 발췌에서 키("용량") 뒤 몇 자 안에 있어야 그 항목의 값으로 인정하는가(정규화 후 기준)
 export const CROSS_CHECK_MIN_SITES = 2; // REQ-028·029 서로 다른 사이트 몇 곳에서 글자 그대로 확인돼야 쓰는가
 export const QUOTE_SEARCH_MAX_USES = 3; // REQ-029 필사 문구 수집 웹검색 상한(비용, NFR-001)
 export const SPEC_SEARCH_MAX_USES = 3; // REQ-028 가전 스펙 수집 웹검색 상한(상품 1개당)

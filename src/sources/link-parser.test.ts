@@ -102,6 +102,23 @@ describe("parseLinkMessage — 스펙 토큰 (REQ-028)", () => {
     });
   });
 
+  it("[REQ-028] 상품명 안의 '/'는 원문 그대로 보존한다(A/B가 'A / B'로 바뀌지 않음)", () => {
+    expect(parseLinkMessage(`${COUPANG}\nA/B 에어프라이어 / 59000 / 용량 3.5L`)).toMatchObject({
+      links: [{ title: "A/B 에어프라이어", priceKrw: 59000, specs: { 용량: "3.5L" } }],
+    });
+    expect(parseLinkMessage(`${COUPANG}\n통돌이 / 건조기 세트 / 59000`)).toMatchObject({ links: [{ title: "통돌이 / 건조기 세트", priceKrw: 59000 }] });
+  });
+
+  it("[REQ-028] 맨 앞(상품명 자리)의 키 단어·숫자는 스펙·가격으로 먹지 않는다", () => {
+    expect(parseLinkMessage(`${COUPANG}\n용량 큰 에어프라이어 / 59000`)).toMatchObject({ links: [{ title: "용량 큰 에어프라이어", priceKrw: 59000, specs: {} }] });
+    expect(parseLinkMessage(`${COUPANG}\n2024 신형 에어프라이어`)).toMatchObject({ links: [{ title: "2024 신형 에어프라이어", priceKrw: null }] });
+    expect(parseLinkMessage(`${COUPANG}\n2024`)).toMatchObject({ links: [{ title: "2024", priceKrw: null }] });
+  });
+
+  it("[REQ-028] 상품명 뒤쪽 조각의 `키 값`은 여전히 스펙이다", () => {
+    expect(parseLinkMessage(`${COUPANG}\n에어프라이어 / 용량 큼`)).toMatchObject({ links: [{ title: "에어프라이어", specs: { 용량: "큼" } }] });
+  });
+
   it("[REQ-028] 스펙을 안 적으면 specs는 비어 있다", () => {
     expect(parseLinkMessage(`${COUPANG}\n로보락 S9`)).toMatchObject({ links: [{ specs: {} }] });
   });

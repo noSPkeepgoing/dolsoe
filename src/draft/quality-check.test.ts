@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ApplianceBody, BookBody, Product } from "@contract/domain.js";
+import type { ApplianceBody, BookBody, DraftBody, Product } from "@contract/domain.js";
 import { EXCLAMATIONS_MAX, SENTENCES_PER_PARAGRAPH_MAX, TAGS_MAX, TAGS_MIN, TITLE_MAX_CHARS } from "@contract/domain.js";
 
 import { checkQuality, findCopyProblems, findExperienceClaims, findFormatProblems, validateAgainstProducts } from "./quality-check.js";
@@ -272,5 +272,25 @@ describe("findFormatProblems — 제목·태그·이모지 (REQ-032·031)", () =
   it("[REQ-031] 본문 필드에 이모지가 있으면 문제(이모지는 렌더러만 넣는다)", () => {
     expect(findFormatProblems(good({ intro: "안녕하세요 😀" })).join(" ")).toMatch(/이모지/);
     expect(findFormatProblems(good({ closing: "끝 ✨" })).join(" ")).toMatch(/이모지/);
+  });
+});
+
+describe("추측 표지 — 팩트가 있는 글", () => {
+  const applianceBody = (reason: string, factIds?: string[]): DraftBody => ({
+    category: "appliance",
+    title: "t",
+    verdict: "결론",
+    comparison: { headers: ["제품"], rows: [["a"]] },
+    recommendations: [{ forWhom: "1인가구", productExternalId: "A", reason, ...(factIds === undefined ? {} : { factIds }) }],
+    experienceLine: null,
+  });
+
+  it("[REQ-028] requireHedges면 factIds를 빼도 추측 표지 없는 판단은 걸린다", () => {
+    expect(checkQuality(applianceBody("1인 가구에 딱 맞아요"), { requireHedges: true }).styleIssues?.some((i) => i.includes("추측 표지")) === true).toBe(true);
+    expect(checkQuality(applianceBody("1인 가구에 딱 맞을 것 같아요"), { requireHedges: true }).styleIssues?.some((i) => i.includes("추측 표지")) === true).toBe(false);
+  });
+
+  it("[REQ-028] requireHedges가 없고 factIds도 없으면 기존처럼 요구하지 않는다", () => {
+    expect(checkQuality(applianceBody("1인 가구에 딱 맞아요")).styleIssues?.some((i) => i.includes("추측 표지")) === true).toBe(false);
   });
 });

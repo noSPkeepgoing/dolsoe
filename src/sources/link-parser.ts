@@ -62,26 +62,27 @@ const SPEC_TOKEN = new RegExp(`^(${SPEC_KEYS.join("|")})\\s+(\\S.*)$`);
 
 /**
  * "상품명 / 899,000원 / 용량 3.5L" → 상품명·가격(없으면 null)·스펙. 조각은 "/"로 나눈다.
- * 스펙은 알려진 키(`SPEC_KEYS`)로 시작하는 `키 값` 조각만 인정한다 — "LG 퓨리케어 360" 같은 상품명이 스펙으로 오인되지 않게.
- * 상품명이 비면 null.
+ * 맨 앞 조각은 상품명 자리라 가격·스펙으로 먹지 않는다 — 단 "용량 3.5L"처럼 값이 숫자로 시작하는 `키 값`만 있는 줄은 스펙으로 읽는다.
+ * 스펙은 알려진 키(`SPEC_KEYS`)로 시작하는 `키 값` 조각만 인정한다("LG 퓨리케어 360"이 스펙으로 오인되지 않게).
+ * 상품명 조각은 원문 그대로 이어 붙인다("A/B"가 "A / B"로 바뀌지 않게). 상품명이 비면 null.
  */
 function parseNameLine(text: string): { title: string; priceKrw: number | null; specs: Record<string, string> } | null {
   const specs: Record<string, string> = {};
   let priceKrw: number | null = null;
   const nameParts: string[] = [];
-  for (const raw of text.split("/")) {
+  text.split("/").forEach((raw, index) => {
     const piece = raw.trim();
-    if (piece.length === 0) continue;
+    if (piece.length === 0) return;
     const spec = SPEC_TOKEN.exec(piece);
-    if (spec !== null) {
+    if (spec !== null && (index > 0 || /^\d/.test(spec[2]!.trim()))) {
       specs[spec[1]!] = spec[2]!.trim();
-    } else if (BARE_PRICE.test(piece) && priceKrw === null) {
+    } else if (index > 0 && BARE_PRICE.test(piece) && priceKrw === null) {
       priceKrw = Number(piece.replaceAll(",", ""));
     } else {
-      nameParts.push(piece);
+      nameParts.push(raw);
     }
-  }
-  const name = nameParts.join(" / ");
+  });
+  const name = nameParts.join("/");
   const priceMatch = PRICE_PATTERN.exec(name);
   if (priceMatch !== null && priceKrw === null) priceKrw = Number(priceMatch[1]!.replaceAll(",", ""));
   const title = name.replace(PRICE_PATTERN, "").replace(NAME_EDGE_SEPARATORS, "").trim();

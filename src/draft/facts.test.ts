@@ -84,6 +84,36 @@ describe("findFactProblems", () => {
   });
 });
 
+describe("findFactProblems — 본문 전체·단위 비교", () => {
+  const products = [product("A", 59000, "3.5L"), product("B", 89000, "5L")];
+  const facts = computeFacts(products);
+  const rec = (reason: string) => ({ forWhom: "1인가구", productExternalId: "A", reason });
+  const withTable = (rows: string[][], extra: Partial<ApplianceBody> = {}): ApplianceBody => ({ ...body([rec("좋을 것 같아요")]), comparison: { headers: ["제품", "가격", "용량"], rows }, ...extra });
+
+  it("[REQ-028] 비교표 셀의 지어낸 수치도 잡는다", () => {
+    expect(findFactProblems(withTable([["A", "59,000원", "6L"]]), products, facts)).toEqual([expect.stringContaining("6L")]);
+    expect(findFactProblems(withTable([["A", "59,000원", "3.5L"], ["B", "89,000원", "5L"]]), products, facts)).toEqual([]);
+  });
+
+  it("[REQ-028] 도입·마무리의 지어낸 수치도 잡는다", () => {
+    expect(findFactProblems(withTable([["A", "59,000원", "3.5L"]], { intro: "7L짜리도 있어요" }), products, facts)).toEqual([expect.stringContaining("7L")]);
+    expect(findFactProblems(withTable([["A", "59,000원", "3.5L"]], { closing: "10만원 안쪽이에요" }), products, facts)).toEqual([expect.stringContaining("10만원")]);
+  });
+
+  it("[REQ-028] 숫자만이 아니라 단위까지 같아야 한다(3.5kg은 3.5L가 아님)", () => {
+    expect(findFactProblems(body([rec("3.5kg이라 가벼울 것 같아요")]), products, facts)).toEqual([expect.stringContaining("3.5kg")]);
+    expect(findFactProblems(body([rec("5만원이에요")]), products, facts)).toEqual([expect.stringContaining("5만원")]);
+  });
+
+  it("[REQ-028] 가격은 59,000원·5.9만원 두 표기 모두 허용하고, 리터·ℓ·ml 표기도 같은 값으로 본다", () => {
+    expect(findFactProblems(body([rec("5.9만원, 3.5 리터, 3500ml예요")]), products, facts)).toEqual([]);
+  });
+
+  it("[REQ-028] 사용자 경험 문장의 숫자는 검사하지 않는다", () => {
+    expect(findFactProblems(withTable([["A", "59,000원", "3.5L"]], { experienceLine: "저는 12L를 써요" }), products, facts)).toEqual([]);
+  });
+});
+
 describe("factLinesFor", () => {
   it("[REQ-028] 가리킨 팩트의 수치 문장만 돌려준다(없는 ID는 건너뜀)", () => {
     const facts = computeFacts([product("A", 59000, "3.5L"), product("B", 89000, "5L")]);

@@ -22,8 +22,8 @@ const body = (over: Partial<ApplianceBody> = {}): ApplianceBody => ({
   category: "appliance",
   title: "공기청정기 2종 비교",
   verdict: "가성비는 1번",
-  comparison: { headers: ["제품", "가격"], rows: [["제품 1", "10만원"], ["제품 2", "20만원"]] },
-  recommendations: [{ forWhom: "원룸", productExternalId: "1", reason: "작음" }],
+  comparison: { headers: ["제품", "가격"], rows: [["제품 1", "보통"], ["제품 2", "높음"]] },
+  recommendations: [{ forWhom: "원룸", productExternalId: "1", reason: "작아서 원룸에 맞을 것 같아요" }],
   experienceLine: null,
   ...over,
 });

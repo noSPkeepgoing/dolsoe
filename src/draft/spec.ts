@@ -1,6 +1,7 @@
 import type { Category, Product } from "@contract/domain.js";
 
 import { crossCheck, type Evidence } from "./cross-check.js";
+import { parseLiters } from "./facts.js";
 
 /** 웹검색으로 찾은 스펙 후보 한 줄과 그 근거가 된 인용들. 판정(2곳 확인)은 코드가 한다(ADR-013). */
 export interface SpecEvidence {
@@ -22,7 +23,7 @@ export function confirmSpecs(found: SpecEvidence): { specs: Record<string, strin
   const urls: string[] = [];
   for (const candidate of found.candidates) {
     if (specs[candidate.key] !== undefined) continue;
-    const result = crossCheck(candidate.value, found.evidence);
+    const result = crossCheck(candidate.value, found.evidence, { key: candidate.key });
     if (!result.passed) continue;
     specs[candidate.key] = candidate.value;
     urls.push(...result.urls);
@@ -39,8 +40,9 @@ export interface GatheredSpecs {
   specOrigin: { user: number; web: number };
 }
 
+/** 판단에 실제로 쓸 수 있는(읽히는) 스펙 값만 센다 — "용량 큼"은 값이 있어도 판단 근거가 아니다. */
 const countKeys = (products: readonly Product[], keys: readonly string[]): number =>
-  products.reduce((sum, product) => sum + keys.filter((key) => product.specs[key] !== undefined).length, 0);
+  products.reduce((sum, product) => sum + keys.filter((key) => parseLiters(product.specs[key]) !== null).length, 0);
 
 /**
  * REQ-028: 스펙 출처 우선순위 ① 사용자가 링크 줄에 적은 값 ② 웹 2곳 이상 확인 ③ 나머지는 비워 둠(판단 안 함).

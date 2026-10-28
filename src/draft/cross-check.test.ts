@@ -48,3 +48,13 @@ describe("crossCheck — 숫자 경계", () => {
     expect(crossCheck("5L", [ev("https://a.example/1", "용량 5L"), ev("https://b.example/1", "5 리터 모델")]).passed).toBe(true);
   });
 });
+
+describe("crossCheck — 키 근접 옵션", () => {
+  const ev = (url: string, excerpt: string) => ({ url, excerpt });
+  it("[REQ-028] key를 주면 key 뒤 SPEC_KEY_WINDOW_CHARS자 안의 값만 인정한다", () => {
+    const far = "용량 " + "가".repeat(30) + " 5L";
+    const options = { key: "용량" };
+    expect(crossCheck("5L", [ev("https://a.example/1", far), ev("https://b.example/1", far)], options).passed).toBe(false);
+    expect(crossCheck("5L", [ev("https://a.example/1", "용량 5L"), ev("https://b.example/1", "용량: 5 리터")], options).passed).toBe(true);
+  });
+});

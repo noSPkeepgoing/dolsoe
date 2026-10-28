@@ -124,8 +124,8 @@ export async function generateDraftBody(input: {
     const trusted = { trustedQuote: quote?.text ?? null };
     // 골격 문제와 지어낸 후기(REQ-011)는 둘 다 재시도 후에도 남으면 차단한다. 금지 표현(REQ-015)만 표시하고 통과시킨다.
     const claims = findExperienceClaims(body, trusted).map((claim) => `봇이 지어낸 후기·경험 표현("${claim}")이 있습니다. 데이터에 있는 사실만 쓰세요`);
-    const structural = [...validateAgainstProducts(body, input.products), ...findCopyProblems(body, input.products, input.reviewExcerpts, trusted), ...findFormatProblems(body, trusted), ...(body.category === "appliance" ? findFactProblems(body, input.products, facts) : []), ...claims];
-    const quality = checkQuality(body, trusted);
+    const structural = [...validateAgainstProducts(body, input.products), ...findCopyProblems(body, input.products, input.reviewExcerpts, trusted), ...findFormatProblems(body, trusted), ...(body.category === "appliance" ? findFactProblems(body, input.products, facts, trusted) : []), ...claims];
+    const quality = checkQuality(body, { ...trusted, requireHedges: facts.length > 0 });
 
     if (structural.length > 0) {
       problems = structural;

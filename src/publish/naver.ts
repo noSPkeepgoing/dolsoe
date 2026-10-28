@@ -60,3 +60,15 @@ export function createNaverDraftPublisher(deps: { driver: NaverEditorDriver }): 
     },
   };
 }
+
+const NAVER_IMAGE_HOST_SUFFIX = "pstatic.net"; // 네이버 서버에 올라간 이미지는 blogfiles.pstatic.net에 놓인다(스파이크 실측)
+
+/** 에디터 이미지 src가 네이버 서버에 올라간 것인가. `data:`·`blob:`(올라가는 중 임시 미리보기)·외부 URL은 아니다. */
+export function isNaverUploadedSrc(src: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(src);
+    return protocol === "https:" && (hostname === NAVER_IMAGE_HOST_SUFFIX || hostname.endsWith(`.${NAVER_IMAGE_HOST_SUFFIX}`));
+  } catch {
+    return false;
+  }
+}

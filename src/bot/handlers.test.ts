@@ -48,7 +48,7 @@ const bodyFor = (input: GenerateBodyInput): DraftBody => {
         category: "appliance",
         title: "제품 소개",
         verdict: "결론",
-        comparison: { headers: ["제품", "가격"], rows: input.products.map((p) => [p.title, "1만원"]) },
+        comparison: { headers: ["제품", "가격"], rows: input.products.map((p) => [p.title, "보통"]) },
         recommendations: [{ forWhom: "누구나", productExternalId: input.products[0]!.externalId, reason: "이유" }],
         experienceLine: experience,
       };

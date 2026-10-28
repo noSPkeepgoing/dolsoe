@@ -1,6 +1,8 @@
 import type { ApplianceBody, ComparisonFact, Product } from "@contract/domain.js";
 import { HOUSEHOLD_BY_LITERS } from "@contract/domain.js";
 
+import { botTextsOf, type CollectOptions } from "./quality-check.js";
+
 const CAPACITY_KEY = "용량";
 const LITERS = /(\d+(?:[.,]\d+)?)\s*(ml|mL|ML|㎖|l|L|ℓ|리터)/;
 
@@ -62,16 +64,28 @@ export function computeFacts(products: readonly Product[]): ComparisonFact[] {
   return facts;
 }
 
-const NUMBER = /\d[\d,]*(?:\.\d+)?/g;
-const numbersIn = (text: string): string[] => (text.match(NUMBER) ?? []).map((n) => n.replaceAll(",", ""));
-/** 수치+단위. 단위 없는 숫자("3종", "2개")는 판단 수치가 아니라 세지 않는다. */
-const MEASURED = /(\d[\d,]*(?:\.\d+)?)\s*(?:만\s*원|원|L|ℓ|리터|ml|W|dB|kg|㎡|평)/gi;
+/** 수치+단위. 단위 없는 숫자("3종", "2개")는 판단 수치가 아니라 세지 않는다. 한글 수 표기("5만9천원")는 보지 않는다. */
+const MEASURED = /(\d[\d,]*(?:\.\d+)?)\s*(만\s*원|원|ml|mL|㎖|L|ℓ|리터|W|dB|kg|㎡|평)/gi;
+
+/** "3.5 리터"·"3500ml" → "3.5|l", "5.9만원"·"59,000원" → "59000|원". 숫자와 단위가 모두 같아야 같은 수치다. */
+function measureKey(rawValue: string, rawUnit: string): string {
+  const value = Number(rawValue.replaceAll(",", ""));
+  const unit = rawUnit.replace(/\s/g, "").toLowerCase();
+  if (unit === "만원") return `${Math.round(value * 10_000)}|원`;
+  if (unit === "ml" || unit === "㎖") return `${Number((value / 1000).toFixed(6))}|l`;
+  if (unit === "l" || unit === "ℓ" || unit === "리터") return `${value}|l`;
+  return `${value}|${unit}`;
+}
+
+const measuresIn = (text: string): { raw: string; key: string }[] =>
+  [...text.matchAll(MEASURED)].map((match) => ({ raw: match[0], key: measureKey(match[1]!, match[2]!) }));
 
 /**
- * REQ-028 검증: 추천이 가리키는 `factIds`는 코드가 계산한 팩트여야 하고, 판단 문장(결론·추천 이유)의 수치+단위는
- * 팩트·상품 스펙·가격에 있는 값이어야 한다. 모델이 지어낸 용량·가격을 걸러 재생성에 넘긴다.
+ * REQ-028 검증: 추천이 가리키는 `factIds`는 코드가 계산한 팩트여야 하고, 봇이 쓴 모든 문장(결론·도입·마무리·추천 이유·비교표 셀 등)의
+ * 수치+단위는 팩트·상품 스펙·제품명·가격에 있는 값이어야 한다. 숫자와 단위가 둘 다 같아야 한다(3.5kg은 3.5L가 아니다).
+ * 모델이 지어낸 용량·가격을 걸러 재생성에 넘긴다. 사용자 경험 문장은 검사하지 않는다.
  */
-export function findFactProblems(body: ApplianceBody, products: readonly Product[], facts: readonly ComparisonFact[]): string[] {
+export function findFactProblems(body: ApplianceBody, products: readonly Product[], facts: readonly ComparisonFact[], options: CollectOptions = {}): string[] {
   const problems: string[] = [];
   const known = new Set(facts.map((fact) => fact.id));
   for (const rec of body.recommendations) {
@@ -81,19 +95,19 @@ export function findFactProblems(body: ApplianceBody, products: readonly Product
   }
 
   const allowed = new Set<string>();
-  for (const fact of facts) numbersIn(fact.text).forEach((n) => allowed.add(n));
+  const allow = (text: string): void => measuresIn(text).forEach((measure) => allowed.add(measure.key));
+  for (const fact of facts) allow(fact.text);
   for (const product of products) {
-    Object.values(product.specs).forEach((value) => numbersIn(value).forEach((n) => allowed.add(n)));
-    if (product.priceKrw !== null) {
-      allowed.add(String(product.priceKrw));
-      allowed.add(String(product.priceKrw / 10_000)); // "9만원"
-    }
+    allow(product.title);
+    Object.values(product.specs).forEach(allow);
+    if (product.priceKrw !== null) allowed.add(`${product.priceKrw}|원`);
   }
-  const sentences = [body.verdict, ...body.recommendations.map((rec) => rec.reason)];
-  for (const sentence of sentences) {
-    for (const match of sentence.matchAll(MEASURED)) {
-      const value = match[1]!.replaceAll(",", "");
-      if (!allowed.has(value)) problems.push(`"${match[0]}"는 제공된 팩트·스펙·가격에 없는 수치입니다. 데이터에 있는 수치만 쓰세요`);
+  const reported = new Set<string>();
+  for (const text of botTextsOf(body, options)) {
+    for (const measure of measuresIn(text)) {
+      if (allowed.has(measure.key) || reported.has(measure.key)) continue;
+      reported.add(measure.key);
+      problems.push(`"${measure.raw}"는 제공된 팩트·스펙·가격에 없는 수치입니다. 데이터에 있는 수치만 쓰세요`);
     }
   }
   return problems;

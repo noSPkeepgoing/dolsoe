@@ -5,7 +5,7 @@ import { DISCLOSURE_TEXTS, EMOJI_MAX_PER_POST } from "@contract/domain.js";
 
 import { missingDisclosures, requiredDisclosures } from "./disclosure.js";
 import { APPLIANCE_THEME_ACCENT, BOOK_THEME_ACCENT, HEADING_SIZE_PX, PHOTO_SLOT_MARKER } from "./naver-style.js";
-import { createNaverDraftPublisher, missingTexts, renderNaverHtml, splitAtPhotoSlot, type NaverEditorDriver } from "./naver.js";
+import { createNaverDraftPublisher, isNaverUploadedSrc, missingTexts, renderNaverHtml, splitAtPhotoSlot, type NaverEditorDriver } from "./naver.js";
 
 const product = (id: string, over: Partial<Product> = {}): Product => ({
   externalId: id,
@@ -318,5 +318,17 @@ describe("필사 코너 (REQ-029)", () => {
     const html = renderNaverHtml(draft(bookBody({ highlights: "목차의 구성이 눈에 띄어요" }), [product("1")]));
     expect(html).toContain("인상 깊은 대목");
     expect(html).not.toContain("필사");
+  });
+});
+
+describe("isNaverUploadedSrc", () => {
+  it("[REQ-035] 네이버 서버(pstatic.net) https 주소만 업로드 완료로 본다", () => {
+    expect(isNaverUploadedSrc("https://blogfiles.pstatic.net/2026/a.png")).toBe(true);
+  });
+
+  it("[REQ-035] data:·blob:·외부·흉내 도메인·빈 값은 업로드 완료가 아니다", () => {
+    for (const src of ["", "data:image/png;base64,AAA", "blob:https://blog.naver.com/1234", "https://example.com/a.png", "https://notpstatic.net/a.png", "http://blogfiles.pstatic.net/a.png", "https://pstatic.net.evil.example/a.png"]) {
+      expect(isNaverUploadedSrc(src), src).toBe(false);
+    }
   });
 });

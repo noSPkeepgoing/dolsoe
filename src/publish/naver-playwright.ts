@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import { chromium, type BrowserContext, type Frame, type Page } from "playwright";
 
 import { TIMED_OUT, withDeadline } from "./deadline.js";
-import { missingTexts, splitAtPhotoSlot, type NaverEditorDriver, type NaverEditorOutcome } from "./naver.js";
+import { isNaverUploadedSrc, missingTexts, splitAtPhotoSlot, type NaverEditorDriver, type NaverEditorOutcome } from "./naver.js";
 
 // 네이버 블로그 에디터 화면 지식(P3: 이 파일 밖으로 새지 않는다). 화면이 바뀌면 여기 선택자만 고친다 — 못 찾으면 editor_unavailable로 보고돼 ④ 텔레그램 전달로 내려간다.
 const WRITE_URL = "https://blog.naver.com/GoBlogWrite.naver";
@@ -58,15 +58,14 @@ async function pasteHtml(page: Page, html: string): Promise<void> {
 }
 
 /**
- * REQ-035: 사진을 클립보드 `image/png`로 붙여넣고, 에디터에 이미지가 늘고 그 src가 `data:`가 아닐 때(=네이버 서버에 올라감)만 성공으로 본다.
+ * REQ-035: 사진을 클립보드 `image/png`로 붙여넣고, 에디터에 이미지가 늘고 그 src가 네이버 서버(`https://*.pstatic.net`)를 가리킬 때만 성공으로 본다(`data:`·`blob:` 임시 미리보기는 올라간 것이 아니다).
  * 확인하지 못하면 false — 호출 쪽이 사진 없이 저장하지 않고 저장 전 실패로 돌린다(ADR-006).
  */
 async function pastePhoto(page: Page, editor: Frame, photoPath: string): Promise<boolean> {
-  const countImages = (): Promise<{ total: number; uploaded: number }> =>
-    editor.evaluate((selector) => {
-      const images = [...document.querySelectorAll(selector)];
-      return { total: images.length, uploaded: images.filter((img) => !(img.getAttribute("src") ?? "").startsWith("data:") && (img.getAttribute("src") ?? "") !== "").length };
-    }, PHOTO_SELECTOR);
+  const countImages = async (): Promise<{ total: number; uploaded: number }> => {
+    const sources = await editor.evaluate((selector) => [...document.querySelectorAll(selector)].map((img) => img.getAttribute("src") ?? ""), PHOTO_SELECTOR);
+    return { total: sources.length, uploaded: sources.filter(isNaverUploadedSrc).length };
+  };
   const before = await countImages();
   const base64 = (await fs.readFile(photoPath)).toString("base64");
   // ClipboardItem은 image/png만 안정적으로 받으므로 JPEG는 페이지 안에서 PNG로 바꿔 넣는다.

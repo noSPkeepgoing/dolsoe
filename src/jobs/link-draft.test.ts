@@ -43,7 +43,7 @@ const bodyFor = (input: GenerateBodyInput): DraftBody =>
         category: "appliance",
         title: "제품 소개",
         verdict: "결론",
-        comparison: { headers: ["제품", "가격"], rows: input.products.map((p) => [p.title, "1만원"]) },
+        comparison: { headers: ["제품", "가격"], rows: input.products.map((p) => [p.title, "보통"]) },
         recommendations: [{ forWhom: "누구나", productExternalId: input.products[0]!.externalId, reason: "이유" }],
         experienceLine: null,
       };
@@ -198,7 +198,7 @@ describe("runLinkDraft", () => {
   describe("스펙 (REQ-028)", () => {
     const evidence = (value: string) => [
       { url: "https://a.example/1", excerpt: `용량 ${value}` },
-      { url: "https://b.example/1", excerpt: `${value} 대용량` },
+      { url: "https://b.example/1", excerpt: `정격 용량: ${value} 대용량` },
     ];
 
     it("[REQ-028] 용량 3개를 적으면 검색 없이 그 값이 상품 스펙·생성기 팩트에 들어가고 카드는 '직접 입력'이다", async () => {

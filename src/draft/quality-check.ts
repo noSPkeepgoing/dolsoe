@@ -21,6 +21,15 @@ const EXCLUDED_KEYS = new Set(["experienceLine", "category"]);
 /** `quote.text`는 출처에서 글자 그대로 검증된 문장(`trustedQuote`)과 같을 때만 검사에서 뺀다(ADR-012). */
 export interface CollectOptions {
   trustedQuote?: string | null;
+  /** 근거 팩트가 있는 가전 글: `factIds`를 빼먹은 추천도 추측 표지를 요구한다(REQ-028). */
+  requireHedges?: boolean;
+}
+
+/** 봇이 쓴 문장만 모은다(경험 한 줄·검증된 필사 문구 제외). 수치 검증 등이 같은 범위를 쓰도록 내보낸다. */
+export function botTextsOf(body: DraftBody, options: CollectOptions = {}): string[] {
+  const texts: string[] = [];
+  collectBotText(body, texts, options);
+  return texts;
 }
 
 function collectBotText(value: unknown, out: string[], options: CollectOptions = {}, key?: string, parent?: unknown): void {
@@ -60,10 +69,10 @@ function findStyleIssues(texts: readonly string[]): string[] {
 }
 
 /** REQ-028: 근거 팩트를 가리키는 적합성 판단 문장에는 추측 표지("~같아요 / ~겠어요 / ~라면 …")가 하나는 있어야 한다. */
-function findMissingHedges(body: DraftBody): string[] {
+function findMissingHedges(body: DraftBody, requireHedges: boolean): string[] {
   if (body.category !== "appliance") return [];
   return body.recommendations.flatMap((rec) =>
-    (rec.factIds ?? []).length > 0 && !HEDGE_MARKER_PATTERN.test(rec.reason) ? [`추측 표지 없는 적합성 판단(${rec.forWhom}): "~같아요/~겠어요/~라면"처럼 추측으로 쓰세요`] : [],
+    (requireHedges || (rec.factIds ?? []).length > 0) && !HEDGE_MARKER_PATTERN.test(rec.reason) ? [`추측 표지 없는 적합성 판단(${rec.forWhom}): "~같아요/~겠어요/~라면"처럼 추측으로 쓰세요`] : [],
   );
 }
 
@@ -75,7 +84,7 @@ export function checkQuality(body: DraftBody, options: CollectOptions = {}): Qua
   return {
     bannedPhrasesFound: BANNED_PHRASES.filter((phrase) => joined.includes(phrase)),
     hasExperienceLine: (body.experienceLine ?? "").trim().length > 0,
-    styleIssues: [...findStyleIssues(texts), ...findMissingHedges(body)],
+    styleIssues: [...findStyleIssues(texts), ...findMissingHedges(body, options.requireHedges === true)],
   };
 }
 

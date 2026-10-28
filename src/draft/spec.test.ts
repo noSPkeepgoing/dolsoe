@@ -18,7 +18,7 @@ const product = (id: string, specs: Record<string, string> = {}): Product => ({
 
 const two = (value: string) => [
   { url: "https://a.example/1", excerpt: `용량 ${value}` },
-  { url: "https://b.example/1", excerpt: `${value} 대용량` },
+  { url: "https://b.example/1", excerpt: `정격 용량: ${value} 대용량` },
 ];
 
 describe("confirmSpecs", () => {
@@ -33,6 +33,24 @@ describe("confirmSpecs", () => {
   });
 });
 
+describe("confirmSpecs — 키 근접", () => {
+  const cand = [{ key: "용량", value: "5L" }];
+  it("[REQ-028] 값만 있고 '용량' 근처가 아니면(다른 항목의 5L) 통과하지 못한다", () => {
+    const evidence = [
+      { url: "https://a.example/1", excerpt: "컵 5L 용기 포함, 본체 용량 3.5L" },
+      { url: "https://b.example/1", excerpt: "물통 5L 별도 판매, 용량 3.5L" },
+    ];
+    expect(confirmSpecs({ candidates: cand, evidence }).specs).toEqual({});
+  });
+  it("[REQ-028] '용량' 바로 뒤의 값이면 통과한다", () => {
+    const evidence = [
+      { url: "https://a.example/1", excerpt: "용량 5 L" },
+      { url: "https://b.example/1", excerpt: "용량: 5리터" },
+    ];
+    expect(confirmSpecs({ candidates: cand, evidence }).specs).toEqual({ 용량: "5L" });
+  });
+});
+
 describe("gatherSpecs", () => {
   const collector = (impl: SpecCollector["collect"]): SpecCollector => ({ collect: vi.fn(impl) });
 
@@ -41,6 +59,11 @@ describe("gatherSpecs", () => {
     const result = await gatherSpecs("appliance", [product("A", { 용량: "3.5L" })], c);
     expect(c.collect).not.toHaveBeenCalled();
     expect(result.products[0]!.specs).toEqual({ 용량: "3.5L" });
+    expect(result.specOrigin).toEqual({ user: 1, web: 0 });
+  });
+
+  it("[REQ-028] 읽을 수 없는 사용자 용량('큼')은 판단에 쓸 수 없으니 사용자 값 개수에 세지 않는다", async () => {
+    const result = await gatherSpecs("appliance", [product("A", { 용량: "큼" }), product("B", { 용량: "5L" })], undefined);
     expect(result.specOrigin).toEqual({ user: 1, web: 0 });
   });
 
