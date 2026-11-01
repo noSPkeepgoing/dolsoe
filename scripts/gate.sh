@@ -27,8 +27,10 @@ echo "── gate: 요구사항 추적성 (활성 페이즈) ──────�
 # gate가 잡으면 그 페이즈의 첫 서브페이즈조차 커밋할 수 없다 — PLAN.md에 "## 게이트 예외"
 # 섹션을 만들고 그 아래 REQ-NNN을 적어두면 예외로 둔다(사람이 관리하는 면제 목록이므로,
 # 그 서브페이즈를 실제로 구현하면 반드시 여기서 지워야 한다 — 안 지우면 테스트 없이 통과됨).
-P1_REQS="$(grep -oE 'REQ-[0-9]+\*\* \(P[0-9]+\)' "$PRD" 2>/dev/null | grep -oE 'REQ-[0-9]+' | sort -u)"
-MANUAL_REQS="$(grep -E '\(관통\)' "$PRD" 2>/dev/null | grep -oE 'REQ-[0-9]+' | sort -u)"
+# 폐기한 REQ는 줄에 `**폐기(`가 있으면 추적에서 뺀다(PRD §12.3·§6.F). (관통) 판정은 REQ 정의 줄(`- **REQ-NNN** … (관통)`)의 **자기 ID만** 본다 —
+# 같은 줄이 다른 REQ를 인용해도(예: REQ-036이 REQ-028을 언급) 그 REQ가 수동 검증으로 오분류되지 않게 한다.
+P1_REQS="$(grep -v '\*\*폐기(' "$PRD" 2>/dev/null | grep -oE 'REQ-[0-9]+\*\* \(P[0-9]+\)' | grep -oE 'REQ-[0-9]+' | sort -u)"
+MANUAL_REQS="$(grep -E '^[[:space:]]*- \*\*REQ-[0-9]+\*\*.*\(관통\)' "$PRD" 2>/dev/null | grep -oE '^[[:space:]]*- \*\*REQ-[0-9]+' | grep -oE 'REQ-[0-9]+' | sort -u)"
 PENDING_REQS="$(awk '/^## 게이트 예외/{flag=1; next} /^## /{flag=0} flag' "$PLAN" 2>/dev/null | grep -oE 'REQ-[0-9]+' | sort -u)"
 TESTED="$(grep -rhoE 'REQ-[0-9]+' "$ROOT" --include='*.test.*' 2>/dev/null | sort -u)"
 

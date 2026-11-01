@@ -49,6 +49,8 @@ export const DISCLOSURE_TEXTS = {
   // TODO(YES24 애드온 정책 확인 후 확정): 아래는 임시 문구. 정확한 표기 의무는 미확인(ADR-009)
   yes24: "이 포스팅은 YES24 애드온 링크를 포함하며, 구매 시 일정액의 수수료를 제공받습니다.",
 } as const;
+/** REQ-036 맛집 협찬·체험단 표시(ADR-019). 메모에 `협찬` 표시가 있을 때만 글 위·아래에 렌더러가 넣고 게이트(REQ-010)가 누락을 막는다. 제휴 대가성 문구와 별개다. */
+export const SPONSORED_DISCLOSURE_TEXT = "이 포스팅은 업체로부터 무상 제공 또는 협찬을 받아 작성되었으며, 내용은 솔직한 개인 의견입니다.";
 
 /** REQ-015 금지 표현(봇이 만든 문장에만 적용, 사용자가 준 경험 문장은 검사 제외). 시작 목록 — 운영하며 승격. */
 export const BANNED_PHRASES = [
@@ -99,6 +101,48 @@ export const HOUSEHOLD_BY_LITERS: readonly { maxLiters: number; label: string }[
 ];
 /** REQ-028 적합성 판단에 붙는 추측 표지("~같아요 / ~겠어요 / ~라면 / 저라면"). 근거 팩트를 가리키는 판단 문장에 하나는 있어야 한다. */
 export const HEDGE_MARKER_PATTERN = /같아요|같습니다|겠어요|겠습니다|라면|듯해요|듯합니다|수 있어요|수 있습니다/;
+// ── 페이즈 2 상수 (PRD §12, ADR-015~019) ──────────────────────────
+export const REGENERATE_TOTAL_MAX = 2; // REQ-026·027·022·015 모든 검사 재생성을 합쳐 글당 최대 횟수(결정 2026-11-01). 기존 REGENERATE_MAX_RETRIES(검사별 1회)를 대체한다
+export const WEEKLY_REPORT_DAY_KST = 0; // REQ-021 일요일(0=일) 20:00 KST, 지난 월~일(KST) 집계
+export const WEEKLY_REPORT_HOUR_KST = 20;
+export const SIMILARITY_CORPUS_MAX = 60; // REQ-026 비교할 과거 초안 수(최근순, 폐기 제외)
+export const SIMILARITY_CORPUS_MIN = 5; // EDGE-029 이보다 적으면 검사 생략
+export const SIMILARITY_SENTENCE_RATIO_MAX = 0.5; // REQ-026 문장 일치율이 이 이상이면 재생성(시작값 — 골든셋 C1~C3로 회귀, 운영하며 조정)
+export const SENTENCE_START_REPEAT_RATIO_MAX = 0.5; // REQ-026 같은 어절로 시작하는 문장 비율 상한(골든셋 C1: 6/10 → 걸림)
+export const SENTENCE_NEAR_NGRAM = 3; // REQ-026 문장 근접 판정에 쓰는 문자 n-gram 크기
+export const SENTENCE_NEAR_JACCARD = 0.8; // REQ-026 문장 쌍이 "같은 문장"으로 치는 n-gram 자카드 하한
+export const AUTO_BADGE_WINDOW = 10; // REQ-024 단계 A 카테고리별 최근 N편
+export const AUTO_BADGE_MIN_CLEAN = 8; // 그중 본문 수정 없이 승인한 편 최소
+export const AUTO_BADGE_MAX_DISCARDED = 1; // 그중 폐기 최대
+export const TREND_SUGGEST_COUNT = 3; // REQ-020 가전 날 건너뜀 알림에 덧붙이는 트렌드 주제 수
+export const TREND_SUGGEST_COOLDOWN_DAYS = 7; // EDGE-032 같은 주제를 이 기간 안에 다시 제안하지 않음
+export const TREND_WINDOW_DAYS = 30; // REQ-020 데이터랩 조회 기간(최근 N일, 일 단위)
+export const TREND_BOOK_BATCH_MAX = 5; // 데이터랩 한 요청 키워드 그룹 상한(5개) — 후보가 더 많으면 공통 기준어를 둔 묶음으로 나눠 비교한다(ADR-017)
+/** REQ-020 가전 주제 제안용 시드 키워드. 트렌드가 직접 글을 만들지 않고 "링크를 보내주세요" 제안에만 쓴다. 운영하며 조정. */
+export const TREND_APPLIANCE_SEEDS: readonly string[] = [
+  "에어프라이어", "무선청소기", "제습기", "공기청정기", "전기밥솥", "가습기", "전기포트", "커피머신", "식기세척기", "로봇청소기", "믹서기", "토스터",
+];
+export const PLACE_SEARCH_MAX_USES = 3; // REQ-036 가게 사실(주소·영업시간·메뉴·가격) 수집 웹검색 상한(비용, NFR-001)
+/**
+ * REQ-022 카테고리 전용 금지 표현(안전성·건강/의학 효능·인증 단정). 걸리면 REQ-027과 같이 재생성, 상한 뒤에도 남으면 카드에 표시한다.
+ * 시작 목록 — 운영하며 승격(CONVENTIONS §학습 루프). 가전·책·맛집은 해당 없음.
+ */
+export const CATEGORY_BANNED_PATTERNS: Readonly<Record<"pet" | "devgear" | "kidcamp", readonly RegExp[]>> = {
+  pet: [/관절에 좋/, /치료/, /질병 예방/, /면역력/, /수의사 (추천|인증)/, /무독성/, /(안전|건강)(한|에) .{0,6}(보장|인증)/],
+  devgear: [/거북목 (해결|교정)/, /손목 (통증|터널).{0,6}(예방|치료|해결)/, /건강에 (좋|도움)/],
+  kidcamp: [/아이(에게|한테) 안전/, /인체에 무해/, /KC ?인증.{0,6}(통과|완료|받은)/, /완벽(한|하게)? ?방수/, /화재 (안전|걱정 없)/],
+};
+export const RESTAURANT_PHOTOS_MAX = 3; // REQ-036 맛집 사진 최대 장수(다른 카테고리는 1장, REQ-034)
+export const MAP_HOST_SUFFIXES = ["map.naver.com", "naver.me", "kko.to", "map.kakao.com", "place.map.kakao.com"] as const; // REQ-036 지도 링크 호스트(naver.me·kko.to는 단축 링크)
+export const SPONSORED_MEMO_MARKER = "협찬"; // REQ-036 메모에 이 단어가 있으면 협찬 표시 글로 본다(체험단·제공 포함은 설계에서 확장하지 않음, YAGNI)
+export const INCOME_MAX_KRW = 100_000_000; // REQ-021 `/수익` 입력 상한(오타 방지)
+/** REQ-022 카테고리 추정 키워드(ADR-018). 비-가전 카테고리 키워드가 정확히 한 카테고리에만 걸리면 그 카테고리, 가전 키워드만 걸리면 가전, 아무것도 안 걸리거나 비-가전이 둘 이상 걸리면 버튼으로 묻는다. */
+export const CATEGORY_KEYWORDS: Readonly<Record<"appliance" | "pet" | "devgear" | "kidcamp", readonly string[]>> = {
+  appliance: ["에어프라이어", "밥솥", "청소기", "공기청정기", "제습기", "가습기", "냉장고", "세탁기", "믹서", "정수기", "전자레인지", "커피머신", "토스터", "전기포트", "식기세척기", "건조기", "인덕션"],
+  pet: ["강아지", "고양이", "반려", "펫", "애견", "애묘", "사료", "캣타워", "배변", "산책"],
+  devgear: ["키보드", "마우스", "모니터", "노트북", "거치대", "웹캠", "허브", "SSD", "헤드셋", "독서대", "스탠딩"],
+  kidcamp: ["캠핑", "텐트", "유모차", "아기", "아이", "유아", "키즈", "카시트", "젖병", "랜턴", "타프", "침낭"],
+};
 export const PHOTO_MAX_BYTES = 10 * 1024 * 1024; // REQ-034 받아들이는 사진 크기 상한(텔레그램 압축 사진은 보통 훨씬 작다)
 export const MEDIA_DIR_DEFAULT = "data/media"; // REQ-034 사진 보관 폴더(.gitignore의 /data 아래)
 
@@ -124,6 +168,19 @@ export type Category = z.infer<typeof CategorySchema>;
 export const CATEGORY_ROTATION: readonly Category[] = ["appliance", "book"]; // REQ-001 번갈아
 /** REQ-002 초안 1편에 쓰는 상품 수(G1 비교표 3종 / B3 한 권 리뷰 1권, ADR-010). */
 export const PRODUCTS_PER_DRAFT: Record<Category, number> = { appliance: 3, book: 1 };
+
+/**
+ * ── 페이즈 2 병합 예정 (build 2.2a에서 아래 5곳을 한 번에 적용한다. 렌더러·카드·게이트의 모든 분기가 함께 바뀌어야 컴파일되므로 설계 단계에서는 적용하지 않는다) ──
+ *  ① CategorySchema = z.enum(["appliance","book","pet","devgear","kidcamp","restaurant"])  (REQ-022·036, ADR-018·019)
+ *  ② PRODUCTS_PER_DRAFT에 pet:3, devgear:3, kidcamp:3, restaurant:1 추가
+ *  ③ ApplianceBodySchema.category = z.enum(COMPARISON_CATEGORIES)  (가전·반려동물·개발장비·육아/캠핑이 비교표형 한 골격, ADR-018)
+ *  ④ DraftBodySchema = z.discriminatedUnion("category", [ApplianceBodySchema, BookBodySchema, RestaurantBodySchema])
+ *  ⑤ AffiliateProgramSchema에 "none"(맛집: 제휴 링크 없음 — 대가성 문구 대상 아님), ProductSourceKindSchema에 "map_link"
+ * 옛 저장 행(appliance·book)은 그대로 읽힌다(추가만, 하위호환).
+ */
+/** REQ-022 비교표형(G1) 본문을 쓰는 카테고리. 링크 모드로만 만든다(쿠팡 API 승인 전 — REQ-037). */
+export const COMPARISON_CATEGORIES = ["appliance", "pet", "devgear", "kidcamp"] as const;
+export type ComparisonCategory = (typeof COMPARISON_CATEGORIES)[number];
 
 export const AffiliateProgramSchema = z.enum(["coupang", "yes24"]);
 export type AffiliateProgram = z.infer<typeof AffiliateProgramSchema>;
@@ -218,6 +275,38 @@ export const ComparisonFactSchema = z.object({
 });
 export type ComparisonFact = z.infer<typeof ComparisonFactSchema>;
 
+/**
+ * REQ-036 맛집 본문(ADR-019). 방문 후기 어조(L3)는 허용하되(PRD §12.5 P2 맛집 예외) 검증 가능한 사실은 placeFacts에만 있고,
+ * 그 값은 사용자 메모 또는 웹 2곳 교차 확인(origin)된 것뿐이다. 사진은 sections[].photoIndex로 위치만 가리킨다(렌더러가 배치).
+ * DraftBodySchema 유니언에는 build 2.2a에서 합친다(위 "병합 예정").
+ */
+export const PlaceFactSchema = z.object({
+  label: z.enum(["address", "hours", "menu", "price", "phone"]),
+  value: z.string().min(1),
+  origin: z.enum(["user", "web"]), // 사용자 메모 / 웹 2곳 이상 확인
+});
+export type PlaceFact = z.infer<typeof PlaceFactSchema>;
+
+export const RestaurantBodySchema = z.object({
+  category: z.literal("restaurant"),
+  title: z.string().min(1),
+  keyword: z.string().min(1).optional(), // 가게명(+동네)
+  intro: z.string().min(1).optional(),
+  placeName: z.string().min(1),
+  placeFacts: z.array(PlaceFactSchema), // 확인된 것만. 비면 "확인 못 함"
+  sections: z
+    .array(z.object({ heading: z.string().min(1), text: z.string().min(1), photoIndex: z.number().int().nonnegative().optional() }))
+    .min(1),
+  recommendedFor: z.string().min(1).optional(),
+  closing: z.string().min(1).optional(),
+  tags: z.array(z.string().min(1)).optional(),
+  experienceLine: z.string().nullable(), // 사용자 메모(REQ-011 원문 보존). 메모가 없으면 null
+  sponsored: z.boolean(), // 메모에 `협찬` 표시가 있음 → SPONSORED_DISCLOSURE_TEXT 필수
+});
+export type RestaurantBody = z.infer<typeof RestaurantBodySchema>;
+/** 모델 출력용: 사실(placeFacts)·협찬 여부는 코드가 채우므로 모델은 쓰지 못한다(ADR-019, 1.7f quote와 같은 방식). */
+export const RestaurantBodyGenSchema = RestaurantBodySchema.required({ keyword: true, intro: true, closing: true, tags: true }).omit({ placeFacts: true, sponsored: true });
+
 export const DraftBodySchema = z.discriminatedUnion("category", [ApplianceBodySchema, BookBodySchema]);
 export type DraftBody = z.infer<typeof DraftBodySchema>;
 
@@ -289,6 +378,15 @@ export const DraftSchema = z.object({
     .object({ filePath: z.string().min(1), mime: z.enum(["image/jpeg", "image/png"]), bytes: z.number().int().positive() })
     .nullable()
     .optional(),
+  /** REQ-036 맛집은 최대 RESTAURANT_PHOTOS_MAX장(순서 있음). 있으면 photo(1장)보다 우선하며 photo는 photos[0]과 같다. 다른 카테고리는 계속 photo 1장(ADR-019, DB v8). */
+  photos: z
+    .array(z.object({ filePath: z.string().min(1), mime: z.enum(["image/jpeg", "image/png"]), bytes: z.number().int().positive() }))
+    .max(RESTAURANT_PHOTOS_MAX)
+    .optional(),
+  /** REQ-036 웹 2곳 교차 확인에 쓴 가게 사실 출처 URL(DB에만, ADR-013 방식). */
+  placeSources: z.array(z.string().url()).optional(),
+  /** REQ-022 카테고리 추정에 걸린 키워드(카드에 표시, EDGE-033). 추정이 아닌 입력(버튼·기본 모드)이면 생략. */
+  categoryEvidence: z.array(z.string()).optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -336,6 +434,11 @@ export const BotCallbackSchema = z.discriminatedUnion("action", [
   // REQ-034: 보낸 사진·메모를 어느 초안에 붙일지 고르는 버튼 / 취소
   z.object({ action: z.literal("attach"), draftId: z.number().int().positive() }),
   z.object({ action: z.literal("attach_cancel") }),
+  // REQ-022 카테고리 추정이 불확실할 때 고르는 버튼(대기 링크 요청은 kv `pending_category`)
+  z.object({ action: z.literal("pick_category"), category: z.enum(["appliance", "pet", "devgear", "kidcamp"]) }),
+  z.object({ action: z.literal("pick_category_cancel") }),
+  // REQ-036 사진만 왔을 때 "맛집 글 새로 만들기" (대기 사진은 kv `pending_media`)
+  z.object({ action: z.literal("new_restaurant") }),
 ]);
 export type BotCallback = z.infer<typeof BotCallbackSchema>;
 
@@ -365,7 +468,7 @@ export const ReviseInstructionSchema = z.object({
 export type ReviseInstruction = z.infer<typeof ReviseInstructionSchema>;
 
 // ── 스케줄 (ADR-002) ───────────────────────────────────────────────
-export const ScheduleJobKindSchema = z.enum(["daily_draft"]); // REQ-025 예약 발행은 P2에서 추가
+export const ScheduleJobKindSchema = z.enum(["daily_draft", "weekly_report"]); // REQ-021 주간 리포트. 예약 발행(REQ-025)은 폐기(2026-11-01)
 export type ScheduleJobKind = z.infer<typeof ScheduleJobKindSchema>;
 
 export const ScheduleJobSchema = z.object({
@@ -390,3 +493,79 @@ export const LlmUsageSchema = z.object({
   estimatedCostKrw: z.number().nonnegative(),
 });
 export type LlmUsage = z.infer<typeof LlmUsageSchema>;
+
+// ── 페이즈 2: 관측 (REQ-021·024, ADR-015) ──────────────────────────
+/**
+ * 추가 전용 이벤트 로그. "수정 없이 승인"과 주간 집계의 재료다(ADR-015).
+ * body_revised = 본문 변경 지시(`수정` 재생성). 경험 한 줄·메모·사진 첨부는 이벤트를 남기지 않는다(수정으로 세지 않기 위해).
+ * generation_skipped는 draftId가 없다(기본 모드 건너뜀).
+ */
+export const DraftEventKindSchema = z.enum(["created", "body_revised", "approved", "discarded", "generation_skipped"]);
+export type DraftEventKind = z.infer<typeof DraftEventKindSchema>;
+
+export const DraftEventSchema = z.object({
+  id: z.number().int().positive(),
+  draftId: z.number().int().positive().nullable(),
+  category: CategorySchema.nullable(), // generation_skipped는 시도한 카테고리, 모르면 null
+  kind: DraftEventKindSchema,
+  at: z.string().datetime(),
+});
+export type DraftEvent = z.infer<typeof DraftEventSchema>;
+
+/** REQ-021 `/수익 <쿠팡> <애드포스트>`로 입력하는 주간 수익. 같은 주 재입력은 덮어쓴다(EDGE-027). */
+export const WeeklyIncomeSchema = z.object({
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // 그 주 월요일(KST) 날짜
+  coupangKrw: z.number().int().nonnegative().max(INCOME_MAX_KRW),
+  adpostKrw: z.number().int().nonnegative().max(INCOME_MAX_KRW),
+  updatedAt: z.string().datetime(),
+});
+export type WeeklyIncome = z.infer<typeof WeeklyIncomeSchema>;
+
+/** REQ-020 하루 트렌드 사용 여부. 못 쓴 날은 주간 리포트에 "트렌드 미사용 N일"로 드러낸다(NFR-004). */
+export const TrendDaySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // KST 날짜
+  used: z.boolean(),
+  reason: z.string().nullable(), // 미사용 사유(데이터랩 장애·전부 0점 등)
+});
+export type TrendDay = z.infer<typeof TrendDaySchema>;
+
+/** REQ-021 리포트 한 통의 재료(집계는 순수 함수, 문장화는 카드 렌더러). */
+export const CategoryWeekStatsSchema = z.object({
+  category: CategorySchema,
+  created: z.number().int().nonnegative(),
+  approved: z.number().int().nonnegative(), // 임시저장(handed_off) 수를 승인 수로 센다(결정)
+  approvedClean: z.number().int().nonnegative(), // 그중 본문 수정 없이 승인
+  discarded: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+  withExperience: z.number().int().nonnegative(), // 경험(메모/사진)이 있는 승인 글
+});
+export const WeeklyReportSchema = z.object({
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  perCategory: z.array(CategoryWeekStatsSchema),
+  income: WeeklyIncomeSchema.nullable(), // 입력 안 했으면 null → "미입력"
+  trendUnusedDays: z.number().int().nonnegative(),
+  previousApproved: z.number().int().nonnegative().nullable(), // 최근 4주 평균 대비 한 줄용(없으면 null)
+});
+export type WeeklyReport = z.infer<typeof WeeklyReportSchema>;
+
+/** REQ-024 단계 A 배지 판정 결과(카드에 표시). eligible=false의 사유는 로그·테스트용. */
+export const AutoBadgeSchema = z.object({
+  eligible: z.boolean(),
+  reason: z.enum(["ok", "not_enough_history", "too_many_revised", "too_many_discarded", "checks_failed", "experience_required"]),
+});
+export type AutoBadge = z.infer<typeof AutoBadgeSchema>;
+
+// ── 페이즈 2: 입력 상태 (REQ-022·036, ADR-018·019) ─────────────────
+/** REQ-022 카테고리를 버튼으로 묻는 동안 보관하는 링크 요청(kv `pending_category`, 한 번에 하나). */
+export const PendingCategorySchema = z.object({
+  message: z.string().min(1), // 원문 링크 메시지 그대로(파서가 다시 읽는다)
+  evidence: z.array(z.string()), // 걸린 키워드(없으면 빈 배열)
+});
+export type PendingCategory = z.infer<typeof PendingCategorySchema>;
+
+/** REQ-036 맛집 대기 상태(kv `pending_restaurant`): 봇이 가게 이름을 물은 직후 다음 메시지를 가게 정보로 받는다. */
+export const PendingRestaurantSchema = z.object({
+  photos: z.array(z.object({ filePath: z.string().min(1), mime: z.enum(["image/jpeg", "image/png"]), bytes: z.number().int().positive() })).max(RESTAURANT_PHOTOS_MAX),
+  memo: z.string().nullable(),
+});
+export type PendingRestaurant = z.infer<typeof PendingRestaurantSchema>;

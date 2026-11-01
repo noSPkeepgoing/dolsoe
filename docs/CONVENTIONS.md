@@ -37,9 +37,12 @@ dolsoe/
 │   ├── draft/                # rules.ts(번갈아·중복·상한), quality-check.ts, generate.ts(생성 루프), store.ts(SQLite 저장소 어댑터), (1.7) cross-check.ts·facts.ts(순수)
 │   ├── sources/              # ProductSource 인터페이스 + 어댑터: yes24.ts, coupang-link.ts(1.3)
 │   ├── llm/                  # prompt.ts(순수), body-generator.ts(Anthropic 호출·zod 검증), cost.ts, usage.ts
+│   ├── report/               # (2.1) aggregate.ts(이벤트→WeeklyReport 순수), 주간 리포트 문장화, /수익 파서
+│   ├── trend/                # (2.2) datalab.ts(HTTP 어댑터), rank.ts(점수 정규화·정렬·제안 선택, 순수)
 │   └── publish/              # publisher.ts(인터페이스), orchestrator.ts, handoff.ts, naver.ts(순수 어댑터·HTML 렌더), naver-style.ts(1.7 서식 토큰·템플릿·이모지 풀 — 스타일의 유일한 위치), naver-playwright.ts(브라우저·화면 지식), renderer.ts
 └── data/dolsoe.db            # 런타임 생성 (.gitignore)
 ```
+- **페이즈 2 추가(ADR-015~019)**: ① 이벤트(`draft_events`)는 **상태 전이 함수 안에서** 기록하고 호출부가 따로 쓰지 않는다. ② 유사도·카테고리 추정·배지·트렌드 순위·리포트 집계는 순수 함수(I/O 없음), 임계값·키워드·시드는 계약 상수에서만 읽는다(코드에 숫자 리터럴 금지). ③ 모델 출력 스키마(`*GenSchema`)에서 코드가 채울 사실 필드(필사 `quote`, 맛집 `placeFacts`·`sponsored`)는 `.omit`으로 모델이 쓰지 못하게 한다. ④ 외부 페이지 읽기(지도 링크 `og:title`)는 사용자가 보낸 링크 1건당 GET 1회, 로그인·크롤링 금지, 실패는 폴백(질문)으로 — 쿠팡 페이지는 계속 읽지 않는다(ADR-008). ⑤ 새 enum 값은 추가만 한다(옛 저장 행이 읽혀야 함).
 - 순수 로직(번갈아 선택, 중복 제외 필터, 품질 검사, 상태 전이 판정, 렌더링)은 I/O와 분리해 **순수 함수**로 둔다 → 테스트 용이.
 - `bot/`은 `draft/`·`publish/`를 호출할 뿐, SQL을 직접 쓰지 않는다(`db.ts`만 SQL). 플랫폼(네이버) 지식은 `publish/naver.ts`·`naver-playwright.ts` 밖으로 새지 않는다(P3).
 - 외부 호출(LLM·상품 소스·텔레그램·네이버)은 각 모듈 경계에서 zod로 검증한 뒤 도메인 타입으로 넘긴다.
